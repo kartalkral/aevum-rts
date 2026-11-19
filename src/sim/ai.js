@@ -5,6 +5,7 @@
 // what its own units and buildings have seen (an explored grid + a "seen" memory, see _vision()).
 // Difficulty changes decision quality and tempo only (think interval, villager targets, how tightly it
 // follows its plan, counter quality, how often it leaves villagers idle, attack timing / sizes).
+import { aiFortificationMethods } from './ai-fortifications.js';
 import { aiMilitaryMethods } from './ai-military.js';
 import { aiBuildOrderMethods } from './ai-build-order.js';
 import { aiEconomyMethods } from './ai-economy.js';
@@ -357,4 +358,4 @@ export class AIController {
   }
 }
 
-installMethods(AIController.prototype, aiEconomyMethods, aiBuildOrderMethods, aiMilitaryMethods);
+installMethods(AIController.prototype, aiEconomyMethods, aiBuildOrderMethods, aiMilitaryMethods, aiFortificationMethods);
