@@ -42,8 +42,25 @@ Bina yerleştirirken: sol tık yerleştirir, Shift basılıyken yerleştirmeye d
 - 1-3 yapay zekâ rakip, üç zorluk, üç harita boyu, kum havuzu modu
 - Harita türleri: Nehir Vadisi, Kıta, Yaylalar, Ovalar, İç Deniz, Adalar veya Rastgele (tohumdan seçilir)
 - Çok oyunculu: oda kodlu lobi, en fazla 8 oyuncu (insan veya yapay zekâ), takımlar, sohbet, deterministik lockstep; kayıtlı çok oyunculu maça devam etme
-- Savaş sisi, tarla döngüsü, kayıt / yükleme (tarayıcıda IndexedDB), 90 saniyede bir otomatik kayıt
+- Savaş sisi, tarla döngüsü, kayıt / yükleme (tarayıcıda IndexedDB)
 - Ana menünün arkasında kendi kendine oynayan demo sahne
+
+## Kayıt ve yükleme
+
+Tek oyunculu oyunda **F5** ile elle kayıt alınabilir; oyun ilerlerken yaklaşık 90 saniyede bir otomatik kayıt alınır. Çok oyunculu kayıtlar **Kayıtlı Maça Devam Et** üzerinden yeni bir lobide açılır; eski lobi, bağlantılar ve henüz simülasyonda işlenmemiş ağ komutları kayıttan dönmez.
+
+| Durum | Yüklemede ne olur? |
+|---|---|
+| Kontrol grupları (Ctrl+1…9) | Oyuncu başına kaydedilir. Yükleyen oyuncu kendi gruplarını geri alır; ölmüş, artık mevcut olmayan veya sahipliği değişmiş üyeler ayıklanır. |
+| Birim emirleri | Birimin yürürlükteki emri ve simülasyona işlenmiş Shift kuyruğu kayıttan döner. |
+| Bina üretimi ve araştırma | Üretim, araştırma ve çağ atlama kuyrukları işlem süreleriyle birlikte saklanır. Bitmiş teknolojiler geri yüklenir, etkileri yeniden hesaplanır. |
+| Görevler | Tek oyunculuda tamamlanan görevler ve ilerleme sayaçları saklanır; aktif görevler ve ilerleme metni yeniden hesaplanır. Yüklemenin hemen ardından, görev dinleyicileri kurulmadan tamamlanan bazı olaylar (ör. araştırma) görev sayacına yansımayabilir. Çok oyunculuda görev sistemi etkin değildir. |
+| Yapay zekâ | Güncel kayıtlar AI gruplarını, keşif/hafıza durumunu, rastgele sayı üretecinin durumunu ve karar zamanlayıcılarını geri yükler. Eski AI kayıtlarında yalnızca eşlenebilen alanlar taşınır. |
+| Arayüz | O anki seçim, kamera konumu, duraklatma ve bina yerleştirme önizlemesi kayda girmez. Kontrol grupları anlık seçimden ayrıdır. |
+
+Yerel kopya bu tarayıcının IndexedDB deposundadır; site verisini silmek yerel kopyayı kaldırır. Varsa bulut kopyası bundan ayrıdır.
+
+**Eski kayıtlar:** Oyun verisi `v: 1` olarak yazılır; bu etiket tek başına uyumluluk garantisi değildir. Yükleyici eski sıkıştırılmamış harita/sis dizilerini de okur. Kontrol grubu alanı olmayan kayıtlarda gruplar boş başlar. AI verisinin ayrı bir sürümü vardır (güncel `v: 2`); eski dalga verisinden yalnızca bazı grup ve zamanlama bilgileri taşınır, örneğin eski keşif rotası geri gelmez. Her eski kayıt ya da sürümler arasında birebir simülasyon devamı garanti edilmez.
 
 ## Sohbet gizliliği
 
@@ -53,9 +70,7 @@ Bulut sohbet geçmişi varsayılan olarak kapalıdır. **Profil → Sohbet Geçm
 
 - Modüller paralel yazıldı; bu sürümde uçtan uca oyun testi yapılmadı, hata çıkabilir.
 - Harita editörü ve senaryo/kampanya yok.
-- Kontrol grupları kayda dahil değil (yüklemeden sonra sıfırlanır).
 - Duvarı sürüklerken önizleme yalnızca uç karoyu gösterir.
-- Kayıtlar tarayıcıya özeldir; tarayıcı verisi silinirse kayıtlar da gider.
 
 ## Geliştirmeye katıl
 
