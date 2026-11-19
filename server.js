@@ -2,6 +2,8 @@
 (async () => {
   const http = await import('node:http');
   const path = await import('node:path');
+  const { RELAY_LIMITS: limits, createRateLimiter, createClientIP, createByteBudget } = await import('./srv/relay-limits.mjs');
+  const { MemoryRoomStore } = await import('./srv/room-store.mjs');
 
   const ROOT = path.dirname(path.resolve(process.argv[1]));
   const PORT = Number(process.env.PORT) || 5173;
@@ -38,48 +40,46 @@
   // Every peer is an object { send(obj), end(), sse|poll }; nothing here may throw into the event loop.
   // The relay keeps no game state: after a restart the clients reconnect with the same peer ids and rebuild the rooms.
   const T0 = Date.now();
-  const MAX_PEERS = 16, MAX_ROOMS = 1000, MAX_Q = 4000, MAX_SSE_BUF = 2 * 1024 * 1024;
-  const MAX_BODY = 65536, BLOB_MAX = 32 * 1024 * 1024,   // (saves of 512 maps)
-    BLOB_TTL = 30 * 60 * 1000, BLOB_TOTAL = 96 * 1024 * 1024, BLOB_EMPTY_KEEP = 60 * 1000;
   const J = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
-  const rooms = new Map();      // room -> Map(peer -> peer object)
-  const blobs = new Map();      // room -> Map(id -> { buf, t })
-  const emptySince = new Map(); // room -> time it became empty (its blobs are kept a little longer)
+  const store = new MemoryRoomStore(limits);
+  const rates = createRateLimiter(limits);
+  const clientIP = createClientIP(process.env.AEVUM_TRUSTED_PROXIES);
+  const input = createByteBudget(limits.inputBytes), output = createByteBudget(limits.outputBytes);
+  const transfers = createByteBudget(limits.blobTransferBytes);
+  setInterval(() => { store.sweep(); rates.sweep(); }, limits.sweepMs).unref();
+  const byIP = (ip, kind) => rates.take('ip', ip, kind);
+  const byUser = (ident, kind) => !ident || rates.take('user', ident.fb, kind);
+  const rejectRate = (res, kind) => reply(res, 429, {
+    ...J, 'Retry-After': String(Math.ceil(1 / Math.min(...Object.values(limits.rates[kind]).map(([rate]) => rate)))), Connection: 'close',
+  }, '{"error":"rate"}');
   const okName = s => typeof s === 'string' && /^[A-Za-z0-9_.-]{1,48}$/.test(s);
   const alive = res => !!res && !res.destroyed && !res.writableEnded;
   const reply = (res, code, headers, body) => { try { if (!alive(res)) return; if (!res.headersSent) res.writeHead(code, headers); res.end(body); } catch { /* closed */ } };
   const tell = (o, obj) => { try { o.send(obj); } catch (e) { logErr('send', e); } };
-  function getRoom(room) { let r = rooms.get(room); if (!r) { r = new Map(); rooms.set(room, r); } emptySince.delete(room); return r; }
   function removePeer(room, peer, obj) {
-    const r = rooms.get(room);
-    if (!r || r.get(peer) !== obj) return;
-    r.delete(peer);
-    for (const o of r.values()) tell(o, { type: 'left', peer });
-    if (!r.size) { rooms.delete(room); emptySince.set(room, Date.now()); }
+    const r = store.removePeer(room, peer, obj);
+    if (r) for (const o of r.peers.values()) tell(o, { type: 'left', peer });
   }
   // the public part of a verified identity, as the relay stamps it on messages
   const pub = (id) => (id ? { uid: id.uid, name: id.name, av: id.av, tp: id.tp } : null);
-  const kicked = new Map();   // room + ' ' + peer -> time: replaced by a newer connection of the same account
-  function addPeer(room, peer, pe, r) {
-    const old = r.get(peer);
+  function addPeer(room, peer, pe) {
+    const old = store.getRoom(room)?.peers.get(peer);
+    // Install the replacement before closing the old stream so its close handler cannot remove the new one.
+    const { peers } = store.setPeer(room, peer, pe);
     if (old) { try { old.end(); } catch { /* ignore */ } }
-    // one account = one player: the same uid under another peer id (a second tab) replaces the older connection
     if (pe.ident) {
-      for (const [p, o] of [...r]) {
-        if (p === peer || !o.ident || o.ident.uid !== pe.ident.uid) continue;
-        kicked.set(room + ' ' + p, Date.now());
+      for (const [p, o] of peers) {
+        if (p === peer || o.ident?.fb !== pe.ident.fb) continue;
+        store.kick(room, p);
         tell(o, { type: 'dup' });
-        r.delete(p);
-        try { o.dead = true; o.end(); } catch { /* ignore */ }
-        for (const q of r.values()) if (q !== pe) tell(q, { type: 'left', peer: p });
+        removePeer(room, p, o);
+        try { o.end(); } catch { /* ignore */ }
       }
     }
-    r.set(peer, pe);
-    const ids = {}; for (const [p, o] of r) if (o.ident) ids[p] = pub(o.ident);
-    tell(pe, { type: 'hello', peers: [...r.keys()], ids });
-    if (!old) for (const [p, o] of r) if (p !== peer) tell(o, { type: 'joined', peer, id: pub(pe.ident) });
+    const ids = Object.create(null); for (const [p, o] of peers) if (o.ident) ids[p] = pub(o.ident);
+    tell(pe, { type: 'hello', peers: [...peers.keys()], ids });
+    if (!old) for (const [p, o] of peers) if (p !== peer) tell(o, { type: 'joined', peer, id: pub(pe.ident) });
   }
-  setInterval(() => { const t = Date.now(); for (const [k, v] of kicked) if (t - v > 120000) kicked.delete(k); }, 30000).unref();
   // friends: one inbox per account {q, waiter, seen}; online = a long-poll is open or ended < 40 s ago
   const FB_OK = /^[A-Za-z0-9]{1,128}$/;
   const inboxes = new Map(), inviteRate = new Map();
@@ -95,65 +95,97 @@
     const tk = req.headers['x-aevum-ticket'] || url.searchParams.get('tk') || '';
     return tk ? ID.checkTicket(String(tk)) : null;
   }
-  function makeSsePeer(room, peer, res) {
+  function budgetedWrite(pe, payload, write) {
+    const size = Buffer.byteLength(payload) + 128;
+    if ((pe.pendingRelayBytes || 0) + size > limits.peerOutputBytes || !output.reserve(size)) return false;
+    pe.pendingRelayBytes = (pe.pendingRelayBytes || 0) + size;
+    let done = false;
+    const release = () => { if (!done) { done = true; pe.pendingRelayBytes -= size; output.release(size); } };
+    try { write(release); return true; } catch { release(); return false; }
+  }
+  function makeSsePeer(res) {
     return {
-      sse: true, res,
+      sse: true, res, dead: false,
       send(obj) {
-        if (!alive(res)) return;
-        if (res.writableLength > MAX_SSE_BUF) { try { res.destroy(); } catch { /* ignore */ } return; } // client stopped reading
-        try { res.write('data: ' + JSON.stringify(obj) + '\n\n'); } catch { /* closed */ }
+        if (this.dead || !alive(res)) return;
+        const data = 'data: ' + JSON.stringify(obj) + '\n\n';
+        if (!budgetedWrite(this, data, cb => res.write(data, cb))) res.destroy();
       },
-      end() { try { res.end(); } catch { /* ignore */ } },
+      end() { this.dead = true; try { res.end(); } catch { /* ignore */ } },
     };
+  }
+  function releaseOnResponse(res, release) {
+    const done = () => { res.off('finish', done); res.off('close', done); release(); };
+    if (!alive(res)) done();
+    else { res.once('finish', done); res.once('close', done); }
   }
   function makePollPeer(room, peer) {
     return {
-      poll: true, q: [], waiter: null, timer: null, dead: false,
-      send(obj) { if (this.dead) return; this.q.push(obj); if (this.q.length > MAX_Q) this.q.splice(0, this.q.length - MAX_Q); this.flush(); },
-      end() { this.dead = true; clearTimeout(this.timer); this.answer('[]'); },
-      answer(body) { const w = this.waiter; if (!w) return false; this.waiter = null; clearTimeout(w.to); reply(w.res, 200, J, body); return true; },
-      flush() { if (this.waiter && this.q.length) { let body; try { body = JSON.stringify(this.q.splice(0)); } catch { body = '[]'; } this.answer(body); this.arm(); } },
+      poll: true, q: [], queued: 0, waiter: null, timer: null, dead: false,
+      send(obj) {
+        if (this.dead) return;
+        const text = JSON.stringify(obj), size = Buffer.byteLength(text) * 3 + 128; // queue + response assembly
+        while (this.q.length && (this.q.length >= limits.pollQueueEntries || this.queued + size > limits.peerOutputBytes)) {
+          const old = this.q.shift(); this.queued -= old.size; output.release(old.size);
+        }
+        if (this.queued + size > limits.peerOutputBytes || !output.reserve(size)) return;
+        this.q.push({ text, size }); this.queued += size; this.flush();
+      },
+      end() { this.dead = true; clearTimeout(this.timer); output.release(this.queued); this.queued = 0; this.q = []; this.answer('[]'); },
+      answer(body, bytes = 0) {
+        const w = this.waiter;
+        if (!w) return;
+        this.waiter = null; clearTimeout(w.to);
+        if (bytes) releaseOnResponse(w.res, () => output.release(bytes));
+        reply(w.res, 200, J, body);
+      },
+      flush() {
+        if (!this.waiter || !this.q.length) return;
+        const text = '[' + this.q.map(e => e.text).join(',') + ']', size = this.queued;
+        this.q = []; this.queued = 0;
+        this.answer(text, size); this.arm();
+      },
       arm() {
         clearTimeout(this.timer);
         if (this.dead) return;
         this.timer = setTimeout(() => {
           if (this.dead) return;
           if (this.waiter) { this.arm(); return; }
-          this.dead = true; this.q.length = 0;
-          removePeer(room, peer, this);
-        }, 10000);
+          this.end(); removePeer(room, peer, this);
+        }, limits.pollIdleMs);
       },
     };
   }
-  function readBody(req, max, cb) {
-    const chunks = []; let size = 0, done = false;
-    const finish = (err, buf) => { if (done) return; done = true; try { cb(err, buf); } catch (e) { logErr('body cb', e, req); } };
-    req.on('data', c => { if (done) return; size += c.length; if (size > max) { chunks.length = 0; finish('big'); return; } chunks.push(c); });
-    req.on('end', () => finish(null, Buffer.concat(chunks)));
+  function readBody(req, max, cb, pool, deadline) {
+    let chunks = [], size = 0, retained = 0, done = false, timer;
+    const finish = (err) => {
+      if (done) return;
+      done = true; clearTimeout(timer);
+      try { cb(err, err ? undefined : Buffer.concat(chunks, size)); } catch (e) { logErr('body cb', e, req); }
+      finally { chunks = []; if (pool) pool.release(retained); }
+    };
+    if (Number(req.headers['content-length']) > max) { finish('big'); return; }
+    if (deadline) timer = setTimeout(() => finish('timeout'), deadline);
+    req.on('data', c => {
+      if (done) return;
+      size += c.length;
+      if (size > max) { finish('big'); return; }
+      const bytes = c.length * 2 + 128; // chunks plus Buffer.concat peak
+      if (pool && !pool.reserve(bytes)) { finish('busy'); return; }
+      retained += bytes; chunks.push(c);
+    });
+    req.on('end', () => finish(null));
     req.on('error', () => finish('err'));
     req.on('aborted', () => finish('err'));
   }
-  function blobBytes() { let n = 0; for (const m of blobs.values()) for (const b of m.values()) n += b.buf.length; return n; }
-  function sweepBlobs(force) {
-    const now = Date.now();
-    for (const [room, m] of blobs) {
-      const es = emptySince.get(room);
-      if (!rooms.has(room) && (es == null || now - es > BLOB_EMPTY_KEEP)) { blobs.delete(room); continue; }
-      for (const [id, b] of m) if (now - b.t > BLOB_TTL) m.delete(id);
-      if (!m.size) blobs.delete(room);
-    }
-    for (const [room, t] of emptySince) if (now - t > BLOB_EMPTY_KEEP * 2) emptySince.delete(room);
-    while (force && blobBytes() > BLOB_TOTAL) { // evict the oldest blob
-      let old = null; for (const [room, m] of blobs) for (const [id, b] of m) if (!old || b.t < old.b.t) old = { room, id, b };
-      if (!old) break; blobs.get(old.room).delete(old.id);
-    }
+  function bodyError(res, err) {
+    reply(res, ({ big: 413, timeout: 408, busy: 503 })[err] || 400, { ...J, Connection: 'close' }, '');
   }
-  setInterval(() => { try { sweepBlobs(false); } catch (e) { logErr('sweep', e); } }, 30000).unref();
 
   // ---- WebSocket peers (GET /mp/ws upgrade): one socket both ways, so a turn packet costs one hop, not a POST
   // plus a long-poll round trip. Minimal RFC 6455 (text frames, ping/pong, close); no dependencies.
   const crypto = await import('node:crypto');
-  const WS_MAX = 65536;
+  const WS_MAX = limits.maxMessageBytes;
   function wsFrame(op, payload) {
     const n = payload.length;
     const head = n < 126 ? Buffer.from([0x80 | op, n]) : n < 65536 ? Buffer.from([0x80 | op, 126, n >> 8, n & 255]) : (() => { const b = Buffer.alloc(10); b[0] = 0x80 | op; b[1] = 127; b.writeBigUInt64BE(BigInt(n), 2); return b; })();
@@ -168,30 +200,57 @@
     return true;
   }
   // reads client frames; onText(string) per complete message; onEnd() once
-  function wsReader(socket, onText, onEnd) {
-    let buf = Buffer.alloc(0), frag = [], fragLen = 0, ended = false;
-    const end = () => { if (ended) return; ended = true; try { onEnd(); } catch (e) { logErr('ws end', e); } };
+  function wsReader(socket, allow, onText, onEnd) {
+    let buf = Buffer.alloc(0), frag = [], fragLen = 0, charged = 0, partial = 0, fragmented = false, ended = false, bodyTimer;
+    const end = () => {
+      if (ended) return;
+      ended = true; clearTimeout(bodyTimer); input.release(charged + partial); charged = partial = 0;
+      buf = Buffer.alloc(0); frag = [];
+      try { onEnd(); } catch (e) { logErr('ws end', e); }
+    };
+    const stop = () => { socket.destroy(); end(); };
     socket.on('data', (chunk) => {
+      if (ended) return;
+      input.release(partial); partial = 0;
       buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
       while (buf.length >= 2) {
         const fin = buf[0] & 0x80, op = buf[0] & 15, masked = buf[1] & 0x80;
         let len = buf[1] & 127, off = 2;
-        if (len === 126) { if (buf.length < 4) return; len = buf.readUInt16BE(2); off = 4; }
-        else if (len === 127) { if (buf.length < 10) return; const big = buf.readBigUInt64BE(2); if (big > BigInt(WS_MAX)) { socket.destroy(); return; } len = Number(big); off = 10; }
-        if (len > WS_MAX || !masked) { socket.destroy(); return; }   // (clients must mask)
-        if (buf.length < off + 4 + len) return;
+        if (len === 126) { if (buf.length < 4) break; len = buf.readUInt16BE(2); off = 4; }
+        else if (len === 127) { if (buf.length < 10) break; const big = buf.readBigUInt64BE(2); if (big > BigInt(WS_MAX)) return stop(); len = Number(big); off = 10; }
+        if (len > WS_MAX || !masked || (op >= 8 && (!fin || len > 125))) return stop();
+        if (buf.length < off + 4 + len) break;
+        if (!allow()) { // 1013: retry later
+          end(); socket.end(wsFrame(8, Buffer.from([0x03, 0xf5])), () => socket.destroy()); return;
+        }
         const mask = buf.subarray(off, off + 4), data = Buffer.from(buf.subarray(off + 4, off + 4 + len));
         for (let i = 0; i < len; i++) data[i] ^= mask[i & 3];
         buf = buf.subarray(off + 4 + len);
         if (op === 8) { try { socket.end(wsFrame(8, Buffer.alloc(0))); } catch { /* ignore */ } end(); return; }
-        if (op === 9) { try { socket.write(wsFrame(10, data)); } catch { /* ignore */ } continue; }
+        if (op === 9) { if (!budgetedWrite(socket, data, cb => socket.write(wsFrame(10, data), cb))) return stop(); continue; }
         if (op === 10) continue;
         if (op === 1 || op === 2 || op === 0) {
-          frag.push(data); fragLen += len;
-          if (fragLen > WS_MAX) { socket.destroy(); return; }
-          if (fin) { const msg = Buffer.concat(frag).toString('utf8'); frag = []; fragLen = 0; try { onText(msg); } catch (e) { logErr('ws msg', e); } }
+          fragmented = !fin;
+          fragLen += len;
+          if (fragLen > WS_MAX) return stop();
+          if (len) {
+            const cost = len * 3 + 128;
+            if (!input.reserve(cost)) return stop();
+            charged += cost; frag.push(data);
+          }
+          if (fin) {
+            const msg = Buffer.concat(frag, fragLen).toString('utf8'); frag = []; fragLen = 0;
+            clearTimeout(bodyTimer); bodyTimer = null; input.release(charged); charged = 0;
+            try { onText(msg); } catch (e) { logErr('ws msg', e); }
+          }
         }
       }
+      if (buf.length) {
+        if (!input.reserve(buf.length + 128)) return stop();
+        partial = buf.length + 128; buf = Buffer.from(buf);
+      } else buf = Buffer.alloc(0);
+      if (partial || fragmented) bodyTimer ||= setTimeout(stop, limits.messageBodyMs);
+      else { clearTimeout(bodyTimer); bodyTimer = null; }
     });
     socket.on('close', end); socket.on('end', end); socket.on('error', end);
   }
@@ -200,20 +259,18 @@
       ws: true, socket, dead: false,
       send(obj) {
         if (this.dead || socket.destroyed) return;
-        if (socket.writableLength > MAX_SSE_BUF) { try { socket.destroy(); } catch { /* ignore */ } return; }   // client stopped reading
-        try { socket.write(wsFrame(1, Buffer.from(JSON.stringify(obj)))); } catch { /* closed */ }
+        const payload = Buffer.from(JSON.stringify(obj));
+        if (!budgetedWrite(socket, payload, cb => socket.write(wsFrame(1, payload), cb))) socket.destroy();
       },
       end() { this.dead = true; try { socket.end(wsFrame(8, Buffer.alloc(0))); } catch { /* ignore */ } setTimeout(() => { try { socket.destroy(); } catch { /* ignore */ } }, 1000).unref(); },
     };
   }
   // relays one {topic, data} message of `peer` to the rest of its room (shared by POST /mp/send and WebSocket)
-  function relay(room, peer, m) {
-    const r = rooms.get(room);
-    if (!r || !m || typeof m.topic !== 'string' || m.topic.length > 32) return;
-    const sender = r.get(peer);
-    if (!sender && !NO_AUTH) return;   // (only a peer that is in the room may post; its verified identity travels with the message)
-    const msg = { type: 'msg', topic: m.topic, data: m.data, from: peer, id: pub(sender && sender.ident) };
-    for (const [p, o] of r) if (p !== peer) tell(o, msg);
+  function relay(room, peer, sender, m) {
+    const r = store.getRoom(room);
+    if (!r || r.peers.get(peer) !== sender || !m || typeof m.topic !== 'string' || m.topic.length > 32) return;
+    const msg = { type: 'msg', topic: m.topic, data: m.data, from: peer, id: pub(sender.ident) };
+    for (const [p, o] of r.peers) if (p !== peer) tell(o, msg);
   }
   function handleUpgrade(req, socket) {
     let url; try { url = new URL(req.url || '', 'http://x'); } catch { socket.destroy(); return; }
@@ -221,26 +278,26 @@
     if (!wsAccept(req, socket)) return;
     const say = (obj) => { try { socket.write(wsFrame(1, Buffer.from(JSON.stringify(obj)))); } catch { /* ignore */ } };
     const bye = (obj) => { say(obj); try { socket.end(wsFrame(8, Buffer.alloc(0))); } catch { /* ignore */ } };
+    const ip = clientIP(req);
+    if (!byIP(ip, 'join')) { bye({ type: 'err', code: 429 }); return; }
     // a probe: the client checks that WebSockets pass (proxies / tunnels) before it picks this transport
     if (url.searchParams.has('probe')) { bye({ type: 'probe' }); return; }
     const room = (url.searchParams.get('room') || '').toUpperCase(), peer = url.searchParams.get('peer') || '';
     if (!okName(room) || !okName(peer)) { bye({ type: 'err', code: 400 }); return; }
     const ident = identOf(req, url);
     if (!ident && !NO_AUTH) { bye({ type: 'err', code: 401 }); return; }
-    if (kicked.has(room + ' ' + peer)) { bye({ type: 'dup' }); return; }
-    const known = rooms.get(room) && rooms.get(room).get(peer);
-    if (known && known.ident && (!ident || ident.uid !== known.ident.uid)) { bye({ type: 'err', code: 403 }); return; }
-    const r0 = rooms.get(room);
-    if ((!r0 && rooms.size >= MAX_ROOMS) || (r0 && !r0.has(peer) && r0.size >= MAX_PEERS)) { bye({ type: 'err', code: 429 }); return; }
-    const pe = makeWsPeer(socket);
-    pe.ident = ident;
-    addPeer(room, peer, pe, getRoom(room));
+    if (!byUser(ident, 'join')) { bye({ type: 'err', code: 429 }); return; }
+    if (store.isKicked(room, peer)) { bye({ type: 'dup' }); return; }
+    if (store.getRoom(room)?.peers.has(peer) && !store.member(room, peer, ident, ip)) { bye({ type: 'err', code: 403 }); return; }
+    if (!store.canJoin(room, peer)) { bye({ type: 'err', code: 429 }); return; }
+    const pe = Object.assign(makeWsPeer(socket), { ident, ip });
+    addPeer(room, peer, pe);
     const hb = setInterval(() => pe.send({ type: 'hb' }), 15000);
-    wsReader(socket, (text) => {
+    wsReader(socket, () => byIP(ip, 'message') && byUser(ident, 'message'), text => {
       if (pe.dead) return;
       let m; try { m = JSON.parse(text); } catch { return; }
       if (m && m.type === 'ping') { pe.send({ type: 'pong', t: m.t }); return; }
-      relay(room, peer, m);
+      relay(room, peer, pe, m);
     }, () => { clearInterval(hb); pe.dead = true; removePeer(room, peer, pe); });
   }
 
@@ -248,9 +305,7 @@
     const room = (url.searchParams.get('room') || '').toUpperCase(), peer = url.searchParams.get('peer') || '';
     if (url.pathname === '/mp/ping') { reply(res, 200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }, 'aevum-mp'); return; }
     if (url.pathname === '/mp/health') {
-      let peers = 0; for (const r of rooms.values()) peers += r.size;
-      let nb = 0; for (const m of blobs.values()) nb += m.size;
-      reply(res, 200, J, JSON.stringify({ ok: true, uptime: Math.round(process.uptime()), since: new Date(T0).toISOString(), rooms: rooms.size, peers, blobs: nb, blobBytes: blobBytes(), rssMB: Math.round(process.memoryUsage().rss / 1048576), pid: process.pid, auth: NO_AUTH ? 'off' : 'on', tpKey: KEYS.source }));
+      reply(res, 200, J, JSON.stringify({ ok: true, uptime: Math.round(process.uptime()), since: new Date(T0).toISOString(), ...store.stats(), rssMB: Math.round(process.memoryUsage().rss / 1048576), pid: process.pid, auth: NO_AUTH ? 'off' : 'on', tpKey: KEYS.source }));
       return;
     }
     // ---- statistics: a beat from every open game tab (a random browser id, what it is doing), the owner's report ----
@@ -313,12 +368,20 @@
     // ---- identity: Firebase ID token -> relay ticket; TP match tickets and ledger ----
     if (url.pathname.startsWith('/mp/auth') || url.pathname.startsWith('/mp/tp/')) {
       if (req.method !== 'POST') { reply(res, 405, {}, ''); return; }
-      readBody(req, 32768, (err, buf) => {
-        if (err) { reply(res, 400, J, '{"error":"bad body"}'); return; }
+      const authRequest = url.pathname === '/mp/auth';
+      if (authRequest && !byIP(clientIP(req), 'auth')) { rejectRate(res, 'auth'); return; }
+      readBody(req, authRequest ? limits.authBodyBytes : 32768, (err, buf) => {
+        if (err) {
+          if (authRequest) bodyError(res, err); else reply(res, 400, J, '{"error":"bad body"}');
+          return;
+        }
         let body; try { body = JSON.parse(buf.toString('utf8') || '{}'); } catch { reply(res, 400, J, '{"error":"bad json"}'); return; }
         const fail = (code, msg) => reply(res, code, J, JSON.stringify({ error: msg }));
-        if (url.pathname === '/mp/auth') {
-          ID.auth(body).then((r) => reply(res, 200, J, JSON.stringify(Object.assign(r, OWNERS.has(r.ident.fb) ? { owner: true } : {}))), (e) => {
+        if (authRequest) {
+          ID.auth(body).then((r) => {
+            if (!byUser(r.ident, 'auth')) { rejectRate(res, 'auth'); return; }
+            reply(res, 200, J, JSON.stringify(Object.assign(r, OWNERS.has(r.ident.fb) ? { owner: true } : {})));
+          }, (e) => {
             if (e instanceof IDM.IdentityError) { fail(e.status, e.message); return; }
             logErr('auth', e, req); fail(503, 'Kimlik şu an doğrulanamadı.');
           });
@@ -332,90 +395,84 @@
           else if (url.pathname === '/mp/tp/info') reply(res, 200, J, JSON.stringify(ID.ledgerInfo(me, body.ledger)));
           else reply(res, 404, {}, '');
         } catch (e) { logErr('tp', e, req); fail(500, 'Sunucu hatası.'); }
-      });
+      }, authRequest ? input : null, authRequest ? limits.messageBodyMs : null);
       return;
     }
-    if (!okName(room) || !okName(peer)) { reply(res, 400, {}, 'bad room/peer'); return; }
     const sse = url.pathname === '/mp/events', issueSse = url.pathname === '/mp/sse-ticket';
-    if ((sse && req.method !== 'GET') || (issueSse && req.method !== 'POST')) {
-      reply(res, 405, { Allow: sse ? 'GET' : 'POST' }, ''); return;
-    }
+    const poll = url.pathname === '/mp/poll', send = url.pathname === '/mp/send', blob = url.pathname === '/mp/blob';
+    if (!(sse || issueSse || poll || send || blob)) { reply(res, 404, {}, ''); return; }
+    const method = req.method;
+    const allow = blob ? ['GET', 'POST'] : [(sse || poll) ? 'GET' : 'POST'];
+    if (!allow.includes(method)) { reply(res, 405, { Allow: allow.join(', ') }, ''); return; }
+    const kind = sse || issueSse ? 'join' : poll ? 'poll' : send ? 'message' : method === 'POST' ? 'upload' : 'download';
+    const ip = clientIP(req);
+    if (!byIP(ip, kind)) { rejectRate(res, kind); return; }
+    if (!okName(room) || !okName(peer)) { reply(res, 400, {}, 'bad room/peer'); return; }
     const grant = sse ? sseTickets.consume(url.searchParams.get('st'), room, peer) : null;
     const header = issueSse && req.headers['x-aevum-ticket'];
     const ident = sse ? grant?.ident : issueSse ? (header ? ID.checkTicket(String(header)) : null) : identOf(req, url);
     if ((sse && !grant) || (!ident && (!NO_AUTH || header))) { reply(res, 401, J, '{"error":"ticket"}'); return; }
-    if (kicked.has(room + ' ' + peer)) { reply(res, 409, J, '{"error":"dup"}'); return; }
-    // a peer id belongs to the identity that registered it
-    const known = rooms.get(room) && rooms.get(room).get(peer);
-    const ownerKey = sse || issueSse ? 'fb' : 'uid';
-    if (known && known.ident && (!ident || ident[ownerKey] !== known.ident[ownerKey])) { reply(res, 403, J, '{"error":"peer"}'); return; }
+    if (!byUser(ident, kind)) { rejectRate(res, kind); return; }
+    if (store.isKicked(room, peer)) { reply(res, 409, J, '{"error":"dup"}'); return; }
+    const member = store.member(room, peer, ident, ip);
+    if (!member && ((send || blob) || store.getRoom(room)?.peers.has(peer))) {
+      reply(res, 403, { ...J, Connection: 'close' }, '{"error":"peer"}'); return;
+    }
     if (issueSse) {
       const ticket = sseTickets.issue(room, peer, ident);
       if (!ticket) { reply(res, 429, J, '{"error":"full"}'); return; }
-      reply(res, 200, J, JSON.stringify({ ticket }));
-      return;
+      reply(res, 200, J, JSON.stringify({ ticket })); return;
     }
     if (sse) {
-      const r0 = rooms.get(room);
-      if ((!r0 && rooms.size >= MAX_ROOMS) || (r0 && !r0.has(peer) && r0.size >= MAX_PEERS)) { reply(res, 429, {}, 'full'); return; }
+      if (!store.canJoin(room, peer)) { reply(res, 429, {}, 'full'); return; }
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', 'Referrer-Policy': 'no-referrer' });
-      const pe = makeSsePeer(room, peer, res);
-      pe.ident = ident;
-      addPeer(room, peer, pe, getRoom(room));
-      // a data heartbeat (not a comment) so the client can notice a silently dead stream
+      const pe = Object.assign(makeSsePeer(res), { ident, ip });
       const hb = setInterval(() => pe.send({ type: 'hb' }), 15000);
-      res.on('close', () => { clearInterval(hb); removePeer(room, peer, pe); });
+      res.on('close', () => { pe.dead = true; clearInterval(hb); removePeer(room, peer, pe); });
+      addPeer(room, peer, pe);
       return;
     }
-    if (url.pathname === '/mp/poll' && req.method === 'GET') {
-      // long-polling peer (for tunnels/proxies that do not pass SSE); shares rooms with SSE peers
-      let r = rooms.get(room);
-      let pe = r && r.get(peer);
-      if (!pe || !pe.poll || pe.dead) {
-        if ((!r && rooms.size >= MAX_ROOMS) || (r && !pe && r.size >= MAX_PEERS)) { reply(res, 429, {}, 'full'); return; }
-        r = getRoom(room);
-        pe = makePollPeer(room, peer);
-        pe.ident = ident;
-        addPeer(room, peer, pe, r);
+    if (poll) {
+      let pe = member;
+      if (!pe?.poll) {
+        if (!store.canJoin(room, peer)) { reply(res, 429, {}, 'full'); return; }
+        pe = Object.assign(makePollPeer(room, peer), { ident, ip });
+        addPeer(room, peer, pe);
       }
-      pe.answer('[]');                      // an older waiting request of the same peer
+      pe.answer('[]');
       clearTimeout(pe.timer);
       if (pe.q.length) { pe.waiter = { res, to: null }; pe.flush(); return; }
-      const w = { res, to: setTimeout(() => { if (pe.waiter === w) { pe.answer('[]'); pe.arm(); } }, 20000) };
+      const w = { res, to: setTimeout(() => { if (pe.waiter === w) { pe.answer('[]'); pe.arm(); } }, limits.pollWaitMs) };
       pe.waiter = w;
       res.on('close', () => { if (pe.waiter === w) { pe.waiter = null; clearTimeout(w.to); pe.arm(); } });
       return;
     }
-    if (url.pathname === '/mp/send' && req.method === 'POST') {
-      readBody(req, MAX_BODY, (err, buf) => {
-        if (err) { reply(res, err === 'big' ? 413 : 400, { Connection: 'close' }, ''); return; }
+    if (send) {
+      readBody(req, limits.maxMessageBytes, (err, buf) => {
+        if (err) { bodyError(res, err); return; }
+        if (store.member(room, peer, ident, ip) !== member) { reply(res, 403, J, '{"error":"peer"}'); return; }
         let m; try { m = JSON.parse(buf.toString('utf8')); } catch { reply(res, 400, {}, 'bad json'); return; }
-        relay(room, peer, m);
+        relay(room, peer, member, m);
         reply(res, 204, { 'Cache-Control': 'no-store' });
-      });
+      }, input, limits.messageBodyMs);
       return;
     }
-    if (url.pathname === '/mp/blob' && req.method === 'POST') {
-      // a saved match handed from the host to the other players (in memory, per room, 30 min)
-      readBody(req, BLOB_MAX, (err, buf) => {
-        if (err) { reply(res, err === 'big' ? 413 : 400, { Connection: 'close' }, err === 'big' ? 'too big' : ''); return; }
-        let m = blobs.get(room); if (!m) { m = new Map(); blobs.set(room, m); }
-        while (m.size >= 8) { const k = m.keys().next().value; m.delete(k); }
-        const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-        m.set(id, { buf, t: Date.now() });
-        if (!rooms.has(room) && !emptySince.has(room)) emptySince.set(room, Date.now());
-        try { sweepBlobs(true); } catch (e) { logErr('sweep', e); }
+    if (method === 'POST') {
+      readBody(req, limits.maxBlobBytes, (err, buf) => {
+        if (err) { bodyError(res, err); return; }
+        if (!buf.length) { reply(res, 400, J, '{"error":"empty blob"}'); return; }
+        const id = store.putBlob(room, peer, ident, ip, member, buf);
+        if (!id) { reply(res, 403, J, '{"error":"peer"}'); return; }
         reply(res, 200, J, JSON.stringify({ id, size: buf.length }));
-      });
+      }, transfers, limits.blobBodyMs);
       return;
     }
-    if (url.pathname === '/mp/blob' && req.method === 'GET') {
-      const m = blobs.get(room), b = m && m.get(url.searchParams.get('id') || '');
-      if (!b) { reply(res, 404, J, '{"error":"not found"}'); return; }
-      reply(res, 200, { 'Content-Type': 'application/octet-stream', 'Content-Length': b.buf.length, 'Cache-Control': 'no-store' }, b.buf);
-      return;
-    }
-    reply(res, 404, {}, '');
+    const buf = store.getBlob(room, peer, ident, ip, url.searchParams.get('id'));
+    if (!buf) { reply(res, 404, J, '{"error":"not found"}'); return; }
+    if (!transfers.reserve(buf.length)) { reply(res, 503, J, '{"error":"busy"}'); return; }
+    const deadline = setTimeout(() => res.destroy(), limits.blobBodyMs);
+    releaseOnResponse(res, () => { clearTimeout(deadline); transfers.release(buf.length); });
+    reply(res, 200, { 'Content-Type': 'application/octet-stream', 'Content-Length': buf.length, 'Cache-Control': 'no-store' }, buf);
   }
 
   // Never let one bad request or a dropped connection take the whole server (and every running match) down.
