@@ -6,6 +6,8 @@ const FARM_RATE = 16 / 9 * 0.85;
 const FARM_SPOT_S = 5;   // seconds a farmer hoes on one spot of his plot before moving on along the row
 import { AIController } from './ai.js';
 import { QuestSystem } from './quests.js';
+import { TOWER_AGE_ATK, towerAgeBonus, BUILD_TIME_MUL, QUEUE_TIME_MUL, unitLos, buildingLos, forDisc, makeMap } from './game-shared.js';
+export { BUILD_TIME_MUL, QUEUE_TIME_MUL, MAX_WEAPON_RANGE, COMBAT_LOS, unitLos, buildingLos, TOWER_AGE_ATK, TOWER_AGE_RANGE, towerAgeBonus, forDisc } from './game-shared.js';
 
 const RES_OF = { tree: 'wood', stone: 'stone', gold: 'gold', berries: 'food', deer: 'food', fish: 'food' };
 const RATE = { tree: 0.42, stone: 0.36, gold: 0.36, berries: 0.4, deer: 0.5 };
@@ -34,34 +36,11 @@ const FF_SEG = 64;   // cells of one flow-field route; a unit asks for the next 
 const TRADE_VAL = { food: 1, wood: 1, stone: 1.3, gold: 2 };
 const BARTER_BONUS = 1.15;   // resource for resource at the market: one step, a bit better than selling then buying
 const TRIBUTE_RES = ['food', 'wood', 'stone', 'gold'];
-// pacing: construction takes 1.6x and every production/research/age queue 1.5x longer (all players alike);
-// since 2026-11-14 (owner meeting) everything is produced 20 % faster: both divided by 1.2
-export const BUILD_TIME_MUL = 1.6 / 1.2;
-export const QUEUE_TIME_MUL = 1.5 / 1.2;
 // players start with this many villagers (owner 2026-11-14: 3 -> 5; AI and multiplayer starts alike)
 export const START_VILLAGERS = 20;   // (owner 2026-11-14: a quick start)
 // pasture without herders: food / s per sheep (8 sheep 0.32 food/s; a fully worked big farm makes ~3.1 food/s) and the
 // seconds one more sheep takes to grow up to PASTURE_SHEEP
 export const PASTURE_IDLE_RATE = 0.04, PASTURE_GROW_S = 45, PASTURE_SHEEP = 8;
-// Line of sight (owner 2026-11-14: "always see who shoots at you"): soldiers, warships, towers and castles see at
-// least 20 % further than the longest weapon range in the game (units with their best range techs, towers in the
-// last age with every tower tech), so no shooter stands outside their sight. Villagers and other buildings keep theirs.
-export const MAX_WEAPON_RANGE = (() => {
-  let m = 0; const tr = {};
-  for (const t of Object.values(TECHS)) if (t.fx && t.fx.range) for (const c in t.fx.range) tr[c] = (tr[c] || 0) + t.fx.range[c];
-  for (const u of Object.values(UNITS)) if (u.atk > 0 && u.range > 0) m = Math.max(m, u.range + (tr[u.cls] || 0));
-  let tw = 0; for (const t of Object.values(TECHS)) if (t.fx && t.fx.towerRange) tw += t.fx.towerRange;
-  for (const b of Object.values(BUILDINGS)) if (b.atk > 0 && (b.id === 'tower' || b.id === 'castle')) m = Math.max(m, b.range + tw + (b.id === 'tower' ? 3 : 0));   // (tower: +1 per age from the Middle Age, see towerAgeBonus)
-  return m;
-})();
-export const COMBAT_LOS = Math.ceil(MAX_WEAPON_RANGE * 1.2 * 10) / 10;
-const LOS_U = {}; for (const [k, u] of Object.entries(UNITS)) LOS_U[k] = u.cls !== 'civil' && u.cls !== 'train' && u.atk > 0 ? Math.max(u.los, COMBAT_LOS) : u.los;
-// sight radius of a unit type (shared by the fog, the AI's vision and the view)
-export const unitLos = (type) => LOS_U[type] || 0;
-// sight radius of a finished building from its centre (an unfinished one sees nothing)
-export const buildingLos = (b, p) => { const d = BUILDINGS[b.type]; const r = d.los + (p && p.mods ? p.mods.blos : 0) + towerAgeBonus(b.type, p ? p.age : 0) + b.size / 2; return b.type === 'tower' || b.type === 'castle' ? Math.max(r, COMBAT_LOS + b.size / 2) : r; };
-// towers hit harder every age (+5 attack per age since playtest 2 (was +3); other attacking buildings +1)
-export const TOWER_AGE_ATK = 5;
 // the temple heals own units within this many tiles of its centre (the view draws it when a temple is selected)
 export const TEMPLE_HEAL_R = 7;
 // the castle shoots a volley at up to this many targets every 2 s, its attack +4 per age (2026-11-17 playtest)
@@ -72,9 +51,6 @@ export const TOWER_CANNON_AGE = 3;
 export const TRAIN_QUEUE_MAX = 100;
 // wood in one tree (owner decision 2026-11-12: a tree is worth as much as a big mine)
 export const TREE_WOOD = 800;
-// towers see and shoot farther every age after the Bronze Age (+1 tile per age: 7 -> 10 in the Industrial Age)
-export const TOWER_AGE_RANGE = 1;
-export const towerAgeBonus = (type, age) => (type === 'tower' ? Math.max(0, (age | 0) - 1) * TOWER_AGE_RANGE : 0);
 // commands a client may send over the network (Game.execCommand); the app may wrap these on the instance
 export const CMD_METHODS = ['cmdMove', 'cmdAttack', 'cmdGather', 'cmdBuild', 'cmdStop', 'cmdExplore', 'cmdBoard', 'cmdUnload', 'cmdReturn', 'placeBuilding', 'placeLine', 'train', 'research', 'ageUp', 'cancelQueue', 'setRally', 'trade', 'deleteEntity', 'cmdOpenGate', 'cmdTribute', 'cmdGroup', 'cmdStance'];
 const CMD_SET = new Set(CMD_METHODS);
@@ -97,15 +73,6 @@ function plainTreeKeys(e) { let i = 0; for (const k in e) { if (k === '_rm') con
 const jsonVal = (v) => (typeof v === 'number' ? (Number.isFinite(v) ? (v === 0 ? 0 : v) : null) : v === undefined || typeof v === 'function' || typeof v === 'symbol' ? null : v);
 const packTree = (e) => [e.id, e.x, e.z, e.rot, e.hp, e.maxHp, e.dead ? 1 : 0, e.amount, e.maxAmount, e.variant, e.scale];
 const unpackTree = (a) => ({ id: a[0], kind: 'resource', type: 'tree', owner: -1, x: a[1], z: a[2], rot: a[3], hp: a[4], maxHp: a[5], dead: !!a[6], amount: a[7], maxAmount: a[8], variant: a[9], scale: a[10] });
-// calls f(start, end) for every row span (flat indices, end exclusive) of the tiles whose centres lie within r of (x, z)
-export function forDisc(N, x, z, r, f) {
-  const r2 = r * r, z0 = Math.max(0, Math.ceil(z - 0.5 - r)), z1 = Math.min(N - 1, Math.floor(z - 0.5 + r));
-  for (let tz = z0; tz <= z1; tz++) {
-    const dz = tz + 0.5 - z, h2 = r2 - dz * dz; if (h2 < 0) continue;
-    const h = Math.sqrt(h2), a = Math.max(0, Math.ceil(x - 0.5 - h)), b = Math.min(N - 1, Math.floor(x - 0.5 + h));
-    if (a <= b) f(tz * N + a, tz * N + b + 1);
-  }
-}
 function rleDecode(a, len) { const g = new Uint8Array(len); if (!Array.isArray(a)) return g; let i = 0; for (let k = 0; k + 1 < a.length && i < len; k += 2) { const v = a[k] | 0, n = a[k + 1] | 0; g.fill(v, i, Math.min(len, i + n)); i += n; } return g; }
 // start spots (fractions of N) for cfg.players games: a ring, so consecutive players (sorted by team) sit side by side
 const RING4 = [[0.2, 0.8], [0.2, 0.2], [0.8, 0.2], [0.8, 0.8]];
@@ -128,26 +95,6 @@ class Events {
   on(n, f) { if (!this.m.has(n)) this.m.set(n, []); this.m.get(n).push(f); return f; }
   off(n, f) { const a = this.m.get(n); if (a) { const i = a.indexOf(f); if (i >= 0) a.splice(i, 1); } }
   emit(n, p) { const a = this.m.get(n); if (!a) return; for (const f of a.slice()) { try { f(p); } catch (err) { console.error('[event ' + n + ']', err); } } }
-}
-
-function makeMap(size, heights, tiles, blocked) {
-  const N = size, V = N + 1;
-  return {
-    size: N, heights, tiles, blocked,
-    heightAt(x, z) {
-      x = Math.min(Math.max(x, 0), N - 0.0001); z = Math.min(Math.max(z, 0), N - 0.0001);
-      const x0 = x | 0, z0 = z | 0, fx = x - x0, fz = z - z0, i = z0 * V + x0;
-      const a = heights[i], b = heights[i + 1], c = heights[i + V], d = heights[i + V + 1];
-      return (a + (b - a) * fx) * (1 - fz) + (c + (d - c) * fx) * fz;
-    },
-    isWalkable(tx, tz) {
-      if (tx < 0 || tz < 0 || tx >= N || tz >= N) return false;
-      const i = tz * N + tx, t = tiles[i];
-      if (t === 4 || t === 5) return false;
-      const b = blocked[i];
-      return b === 0 || b === 2 || b === 3;
-    },
-  };
 }
 
 export class Game {

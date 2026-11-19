@@ -6,7 +6,7 @@
 // Difficulty changes decision quality and tempo only (think interval, villager targets, how tightly it
 // follows its plan, counter quality, how often it leaves villagers idle, attack timing / sizes).
 import { UNITS, BUILDINGS, TECHS, AGES, FARM_SLOTS } from '../data.js';
-import { QUEUE_TIME_MUL, unitLos, buildingLos, forDisc } from './game.js';
+import { QUEUE_TIME_MUL, unitLos, buildingLos, forDisc } from './game-shared.js';
 
 const MIN = 60;
 const DIFF = {
