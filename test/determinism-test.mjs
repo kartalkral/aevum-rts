@@ -1,6 +1,7 @@
 // Lockstep determinism: node test/determinism-test.mjs [minutes]
 // Two clients (cfg.me 0 and 1) + a replay run get the same scripted command stream through execCommand.
 import { Game, CMD_METHODS } from '../src/sim/game.js';
+import { traceState } from './replay-trace.mjs';
 
 const MIN = +(process.argv[2] || 20);
 const TICKS = Math.round(MIN * 60 * 30), DT = 1 / 30;
@@ -56,6 +57,7 @@ ok(A.teamOf(0) === 1 && A.teamOf(1) === 1 && A.teamOf(2) === 2 && A.isAlly(0, 1)
 ok(A.hash() === B.hash() && A.hash() === C.hash(), 'initial hash equal ' + A.hash());
 let firstBad = -1, nCmd = 0, nOk = 0, forgedOwnerOk = true;
 const t0 = Date.now();
+traceState(A);
 for (let t = 1; t <= TICKS; t++) {
   const cmds = script(A, t);
   for (const [pid, m, a] of cmds) {
@@ -66,7 +68,11 @@ for (let t = 1; t <= TICKS; t++) {
     if (m === 'placeBuilding' && ra) { const b = A.getEntity(ra); if (!b || b.owner !== pid) forgedOwnerOk = false; }
   }
   A.update(DT); B.update(DT); C.update(DT);
-  if (t % 300 === 0) { const ha = A.hash(), hb = B.hash(); if (ha !== hb && firstBad < 0) { firstBad = t; console.log('  desync at tick', t, ha, hb); } }
+  if (t % 300 === 0) {
+    traceState(A);
+    const ha = A.hash(), hb = B.hash();
+    if (ha !== hb && firstBad < 0) { firstBad = t; console.log('  desync at tick', t, ha, hb); }
+  }
   if (A.over) break;
 }
 const secs = (Date.now() - t0) / 1000;

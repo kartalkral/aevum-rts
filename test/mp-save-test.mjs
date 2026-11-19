@@ -3,6 +3,7 @@
 // and deserialized twice with different `me`. Both copies (and the original, which never stopped) then get the
 // same command stream; their hashes must stay equal every 300 ticks.
 import { Game } from '../src/sim/game.js';
+import { traceState } from './replay-trace.mjs';
 
 const MIN_A = +(process.argv[2] || 6), MIN_B = +(process.argv[3] || 6);
 const DT = 1 / 30;
@@ -50,7 +51,11 @@ const O = new Game(cfg(0));
 ok(O.players.length === 4 && O.ais.length === 2 && O.mp, '4 players, 2 AIs, mp');
 const T1 = Math.round(MIN_A * 60 * 30), T2 = Math.round(MIN_B * 60 * 30);
 const t0 = Date.now();
-for (let t = 1; t <= T1; t++) { exec([O], script(O, t)); O.update(DT); }
+traceState(O);
+for (let t = 1; t <= T1; t++) {
+  exec([O], script(O, t)); O.update(DT);
+  if (t % 300 === 0) traceState(O);
+}
 const json = JSON.stringify(O.serialize());
 console.log('  save size', (json.length / 1024).toFixed(0), 'KB, tick', O.tick);
 const A = Game.deserialize(JSON.parse(json), { me: 0 }), B = Game.deserialize(JSON.parse(json), { me: 1 });
@@ -74,6 +79,7 @@ for (let t = T1 + 1; t <= T1 + T2; t++) {
   exec([O, A, B], cmds);
   O.update(DT); A.update(DT); B.update(DT);
   if (t % 300 === 0) {
+    traceState(O);
     checks++;
     const ha = A.hash(), hb = B.hash(), ho = O.hash();
     if (ha !== hb && badAB < 0) { badAB = t; console.log('  A/B mismatch at tick', t, ha, hb); }
@@ -93,6 +99,7 @@ console.log('  ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s wall; units', aft
 // a single-player save still round-trips (no mp, quests on)
 const S = new Game({ mapSize: 96, seed: 5, enemies: 1 });
 for (let t = 0; t < 900; t++) S.update(DT);
+traceState(S);
 const S2 = Game.deserialize(JSON.parse(JSON.stringify(S.serialize())));
 ok(!S2.mp && S2.quests.list.length === S.quests.list.length && S2.hash() === S.hash(), 'single-player save still loads (quests ' + S2.quests.list.length + ', hash equal)');
 console.log(fails.length ? 'FAILED: ' + fails.length : 'ALL OK');
