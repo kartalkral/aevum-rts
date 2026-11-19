@@ -1809,7 +1809,6 @@ export class UI {
       tg.title = 'Sohbet (Enter)';
       tg.onmousedown = (ev) => ev.preventDefault();   // keep focus in the input while open
       tg.onclick = () => { this._click(); if (this.chatOpen) this.closeChat(); else this.openChat(); };
-      // (no download button any more, 2026-11-17: the logs are read from Firestore, tools/read-chatlog.mjs)
       head.append(tg, el('span', 'chattitle', 'Sohbet · Enter: gönder · Esc: kapat'));
       const feed = el('div', 'chatfeed', '<div class="cspacer"></div>');
       const row = el('div', 'chatin');

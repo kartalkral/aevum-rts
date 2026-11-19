@@ -175,6 +175,8 @@ async function readSse(url, ms, until) {
   try {
     const r = await fetch(base(port) + '/mp/events?room=ABCDE&peer=p1');
     ok(r.status === 401, 'relay: no ticket -> 401 (' + r.status + ')');
+    const mint = await fetch(base(port) + '/mp/sse-ticket?room=ABCDE&peer=p1', { method: 'POST' });
+    ok(mint.status === 401, 'relay: issuing SSE tickets requires authentication');
     const s = await fetch(base(port) + '/mp/send?room=ABCDE&peer=p1', { method: 'POST', body: '{"topic":"lobby","data":{}}' });
     ok(s.status === 401, 'relay: send without ticket -> 401');
     const a = await fetch(base(port) + '/mp/auth', { method: 'POST', body: JSON.stringify({ dev: { fb: 'x1', uid: UID, name: 'Dev' } }) });
@@ -193,9 +195,20 @@ async function readSse(url, ms, until) {
     const A = await auth('fbA', 'a'.repeat(32), 'Ali');
     const B = await auth('fbB', 'b'.repeat(32), 'Banu');
     ok(!!A.ticket && A.ident.name === 'Ali', 'dev auth gives a ticket');
-    const evA = readSse(base(port) + '/mp/events?room=ROOM1&peer=pa&tk=' + encodeURIComponent(A.ticket), 2500, (g) => g.some((m) => m.type === 'msg'));
+    const mint = (t, room, peer) => fetch(base(port) + `/mp/sse-ticket?room=${room}&peer=${peer}`, { method: 'POST', headers: { 'X-Aevum-Ticket': t } });
+    const stream = (room, peer, ticket) => base(port) + `/mp/events?room=${room}&peer=${peer}&st=${encodeURIComponent(ticket)}`;
+    const aGrant = (await (await mint(A.ticket, 'ROOM1', 'pa')).json()).ticket;
+    ok((await fetch(stream('ROOM2', 'pa', aGrant))).status === 401, 'SSE ticket is bound to room');
+    ok((await fetch(stream('ROOM1', 'different', aGrant))).status === 401, 'SSE ticket is bound to peer');
+    ok((await fetch(base(port) + '/mp/events?room=ROOM1&peer=pa&tk=' + encodeURIComponent(A.ticket))).status === 401, 'general relay ticket is not accepted by SSE');
+    ok((await mint(aGrant, 'ROOM1', 'pa')).status === 401, 'SSE ticket cannot mint a new ticket');
+    const evA = readSse(stream('ROOM1', 'pa', aGrant), 2500, (g) => g.some((m) => m.type === 'msg'));
     await new Promise((r) => setTimeout(r, 300));
-    const evB = readSse(base(port) + '/mp/events?room=ROOM1&peer=pb&tk=' + encodeURIComponent(B.ticket), 2500, (g) => g.some((m) => m.type === 'dup'));
+    ok((await fetch(stream('ROOM1', 'pa', aGrant))).status === 401, 'used SSE ticket cannot be replayed');
+    const forbiddenMint = await mint(B.ticket, 'ROOM1', 'pa');
+    ok(forbiddenMint.status === 403, 'another account cannot mint a ticket for a connected peer');
+    const bGrant = (await (await mint(B.ticket, 'ROOM1', 'pb')).json()).ticket;
+    const evB = readSse(stream('ROOM1', 'pb', bGrant), 2500, (g) => g.some((m) => m.type === 'dup'));
     await new Promise((r) => setTimeout(r, 300));
     // B claims to be "Ali" in the payload: the stamped identity says Banu
     await fetch(base(port) + '/mp/send?room=ROOM1&peer=pb', { method: 'POST', headers: { 'X-Aevum-Ticket': B.ticket }, body: JSON.stringify({ topic: 'lobby', data: { k: 'hello', name: 'Ali', uid: 'a'.repeat(32) } }) });
@@ -209,12 +222,13 @@ async function readSse(url, ms, until) {
     ok(msg && msg.id && msg.id.name === 'Banu' && msg.id.uid === 'b'.repeat(32), 'relay: messages are stamped with the sender\'s verified identity');
     // the same account a second time (another tab): the older connection is replaced
     const B2 = await auth('fbB', 'b'.repeat(32), 'Banu');
-    const evB2 = readSse(base(port) + '/mp/events?room=ROOM1&peer=pb2&tk=' + encodeURIComponent(B2.ticket), 1200);
+    const b2Grant = (await (await mint(B2.ticket, 'ROOM1', 'pb2')).json()).ticket;
+    const evB2 = readSse(stream('ROOM1', 'pb2', b2Grant), 1200);
     const gb = await evB;
     ok(gb.got.some((m) => m.type === 'dup'), 'relay: a second connection of the same account replaces the first');
     const hello2 = (await evB2).got.find((m) => m.type === 'hello');
     ok(hello2 && !hello2.peers.includes('pb') && hello2.ids && hello2.ids.pb2 && hello2.ids.pb2.name === 'Banu', 'relay: hello lists verified identities, without the replaced peer');
-    const back = await fetch(base(port) + '/mp/events?room=ROOM1&peer=pb&tk=' + encodeURIComponent(B.ticket));
+    const back = await mint(B.ticket, 'ROOM1', 'pb');
     ok(back.status === 409, 'relay: the replaced peer id cannot come back (' + back.status + ')');
     try { await back.body.cancel(); } catch { /* ignore */ }
     // TP through the relay

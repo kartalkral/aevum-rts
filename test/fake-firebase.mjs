@@ -157,6 +157,7 @@ export function fakeFirebase({ projectId = 'test-proj', apiKey = 'test-key', now
       const old = docs.get(path);
       if (w.currentDocument && w.currentDocument.exists === false && old) return fsErr(409, 'ALREADY_EXISTS', 'Document already exists: ' + w.update.name);
       if (w.currentDocument && w.currentDocument.exists === true && !old) return fsErr(404, 'NOT_FOUND', 'No document to update');
+      if (w.currentDocument?.updateTime && old?.updateTime !== w.currentDocument.updateTime) return fsErr(400, 'FAILED_PRECONDITION', 'Document changed');
       const fields = JSON.parse(JSON.stringify(w.update.fields || {}));
       for (const tr of w.updateTransforms || []) if (tr.setToServerValue === 'REQUEST_TIME') fields[tr.fieldPath] = { timestampValue: t };
       const size = JSON.stringify(fields).length;

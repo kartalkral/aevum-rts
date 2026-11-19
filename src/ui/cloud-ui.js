@@ -1,3 +1,4 @@
+import { chatPrivacyNotice } from './chat-privacy-ui.js';
 // Aevum - account UI: the sign-in window (Google is the only way in, and signing in is required to play), the
 // account card of the main menu, avatars, the account part of the Profil screen, save badges and the delete-save
 // question. All user-controlled text (e-mail, names, server messages) goes in via textContent only; avatar markup
@@ -129,6 +130,7 @@ export function loginScreen(ui) {
     h('p', 'gate-text', 'Oynamak için Google hesabınla giriş yap. Her hesap tek bir oyuncudur: adın, avatarın, TP puanın, maç geçmişin ve kayıtların hesabına bağlı kalır ve her bilgisayarda seninle gelir.'));
   if (!ui.app.cloud) card.append(h('div', 'mperr', 'Hesap sistemi bu tarayıcıda başlatılamadı (çerezler / site verileri engellenmiş olabilir). Oynamak için giriş gerekli.'));
   else card.append(googleBlock(ui, { wide: true }));
+  card.append(chatPrivacyNotice());
   card.append(h('p', 'gate-small', 'Kullanıcı adın e-posta adresinden otomatik oluşur; Profil ekranından değiştirebilirsin. E-posta adresin diğer oyunculara gösterilmez.'));
   box.append(card);
   const links = h('div', 'gate-links');

@@ -7,7 +7,7 @@ import { AudioManager } from './audio.js';
 import * as storage from './storage.js';
 import * as profile from './profile.js';
 import { CloudSync, mergeSaveLists } from './cloud/sync.js';
-import { setChatSink } from './chatlog.js';
+import { configureChatLog } from './chatlog.js';
 import { FIREBASE } from './cloud/config.js';
 import { AUTH_KEY } from './cloud/auth.js';
 import { GoogleSignIn } from './cloud/google.js';
@@ -416,7 +416,7 @@ function initCloud() {
       history: { list: () => storage.historyList(), get: id => storage.historyGet(id), put: r => storage.historyPut(r), del: ids => storage.historyDelete(ids) },
       saves: { list: () => storage.list(), get: k => storage.get(k), put: (k, v) => storage.put(k, Object.assign(v, { owner: ownerUid() })), del: k => storage.del(k) },
     });
-    setChatSink(e => cloud && cloud.loggedIn ? cloud.logChat(e) : null);   // the chat lines this player sends -> Firestore
+    configureChatLog({ account: () => cloud?.user?.uid, upload: (e) => cloud?.logChat(e) });
     // in a game: a short toast when the cloud stops working (playing goes on; the queue is retried later)
     let lastStatus = cloud.status;
     cloud.onChange(st => {

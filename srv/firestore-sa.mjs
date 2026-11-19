@@ -56,7 +56,7 @@ export function createSaStore({ sa, projectId, fetch: fetchFn = globalThis.fetch
   async function call(url, init = {}) {
     const r = await fetchFn(url, Object.assign({}, init, { headers: Object.assign({ Authorization: 'Bearer ' + (await token()), 'Content-Type': 'application/json' }, init.headers || {}) }));
     if (r.status === 404) return null;
-    if (!r.ok) { let m = ''; try { m = (await r.text()).slice(0, 300); } catch { /* ignore */ } throw new Error('stats firestore ' + r.status + ' ' + m); }
+    if (!r.ok) { await r.body?.cancel().catch(() => {}); throw new Error('stats firestore ' + r.status); }
     return r.json();
   }
 

@@ -6,6 +6,7 @@ import { AGES } from '../data.js';
 import * as P from '../profile.js';
 import { loginScreen, statusPill, avatarEl, avatarPicker, tpText, TP_RULE_TEXT } from './cloud-ui.js';
 import { avatarOf } from '../avatars.js';
+import { accountDeleteButton, menuChatHistory } from './chat-privacy-ui.js';
 import { levelOf } from '../rank.js';
 import { RES_ICONS, keepIcons } from '../icons.js';
 
@@ -122,7 +123,9 @@ export function menuProfile(ui, note, bad) {
     cloud.logout();
     ui._menuMain('Çıkış yapıldı.');
   };
-  acts.append(out);
+  const chat = h('button', 'mbtn small', 'Sohbet Geçmişi');
+  chat.onclick = () => menuChatHistory(ui, () => menuProfile(ui));
+  acts.append(chat, accountDeleteButton(ui, say), out);
   box.append(acts);
   box.append(h('div', 'prof-meta', 'Oyuncu kimliği: ' + prof.uid.slice(0, 8) + '… · Oluşturuldu: ' + fmtDate(prof.created)));
 

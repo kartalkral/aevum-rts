@@ -1,7 +1,6 @@
 // Aevum - transport over the local node server (Server-Sent Events down, POST up).
-// After the first successful connect it never gives up: EventSource reconnects by itself, and when the stream is
-// closed for good (server restarted, HTTP error) or goes silent (no heartbeat for 40 s) it is re-opened with backoff
-// (0.4 s -> 3 s) under the SAME peer id, so the relay rebuilds the room and the match goes on.
+// Each attempt obtains a single-use stream grant. After a disconnect or a silent heartbeat,
+// retry with backoff under the same peer id so the relay rebuilds the room.
 import { PollTransport, backoff, identMixin } from './transport-poll.js';
 function rid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); }
 
@@ -17,7 +16,7 @@ export class SSETransport {
     this._peerFns = [];
     this._statusFns = [];
     this._peers = new Set();
-    this.es = null;
+    this.es = null; this._opening = null;
     this._run = false;
     this._fails = 0; this._retryT = null; this._wd = null; this._lastMsg = 0;
   }
@@ -37,15 +36,50 @@ export class SSETransport {
     });
   }
 
-  // (async with a ticket: a stream that keeps failing gets a fresh ticket first - the relay restarted / it expired)
+  _closeStream() {
+    const es = this.es; this.es = null;
+    try { es?.close(); } catch { /* ignore */ }
+  }
+
   async _open() {
-    if (!this._run) return;
-    if (this.es) { try { this.es.close(); } catch { /* ignore */ } this.es = null; }
-    if (this._ticketFn) { await this._tk(this._fails >= 2 || !this._ticket); if (!this._run) return; }
-    const tk = this._ticket ? '&tk=' + encodeURIComponent(this._ticket) : '';
-    const url = `${this.base}/mp/events?room=${encodeURIComponent(this.room)}&peer=${encodeURIComponent(this.id)}${tk}`;
-    let es;
-    try { es = new EventSource(url); } catch { this._retry(); return; }
+    if (!this._run || this._opening) return;
+    this._closeStream();
+    const opening = new AbortController(), room = this.room;
+    this._opening = opening;
+    const active = () => this._run && this._opening === opening && this.room === room && !opening.signal.aborted;
+    const params = new URLSearchParams({ room, peer: this.id });
+    let es, timeout;
+    try {
+      if (this._ticketFn && !this._ticket) {
+        const fresh = !!this._refreshTicket;
+        await this._tk(fresh);
+        if (active() && this._ticket) this._refreshTicket = false;
+      }
+      if (!active()) return;
+      if (this._ticketFn && !this._ticket) { this._retry(); return; }
+      timeout = setTimeout(() => opening.abort(), 4500);
+      const r = await fetch(`${this.base}/mp/sse-ticket?${params}`, {
+        method: 'POST', headers: this._hdr(), cache: 'no-store', redirect: 'error', signal: opening.signal,
+      });
+      if (!active()) { if (this._opening === opening) this._retry(); return; }
+      if (!r.ok) r.body?.cancel().catch(() => {});
+      if (r.status === 409) { this._dupStop(); return; }
+      if (r.status === 401 && this._ticketFn) {
+        // Obtain a new general relay ticket on the next attempt, through the account's refresh hook.
+        this._ticket = '';
+        this._refreshTicket = true;
+      }
+      if (!r.ok) { this._retry(); return; }
+      const { ticket } = await r.json();
+      if (!active()) { if (this._opening === opening) this._retry(); return; }
+      if (typeof ticket !== 'string' || !ticket) { this._retry(); return; }
+      params.set('st', ticket);
+      es = new EventSource(`${this.base}/mp/events?${params}`);
+    } catch { if (this._opening === opening) this._retry(); return; }
+    finally {
+      clearTimeout(timeout);
+      if (this._opening === opening) this._opening = null;
+    }
     this.es = es; this._lastMsg = Date.now();
     es.onmessage = ev => {
       if (this.es !== es) return;
@@ -54,7 +88,7 @@ export class SSETransport {
       if (!m || typeof m !== 'object') return;
       if (m.type === 'hb') { this._setUp(true); return; }
       this._noteIds(m);
-      if (m.type === 'dup') { this._dupStop(); try { es.close(); } catch { /* ignore */ } this.es = null; return; }
+      if (m.type === 'dup') { this._dupStop(); this._closeStream(); return; }
       if (m.type === 'hello') {
         const before = new Set(this._peers);
         this._peers = new Set((m.peers || []).filter(p => p !== this.id));
@@ -75,9 +109,9 @@ export class SSETransport {
     es.onerror = () => {
       if (this.es !== es) return;
       this._setUp(false);
-      // CONNECTING (0): the browser retries by itself; CLOSED (2): it gave up (an HTTP error such as 401/409), we re-open
-      if (es.readyState === 2) this._retry();
-      else if (this._ticketFn) { this._fails++; if (this._fails >= 3) { try { es.close(); } catch { /* ignore */ } this._retry(); } }
+      // Native retry would reuse a consumed URL. Close immediately and obtain a new grant.
+      this._closeStream();
+      this._retry();
     };
   }
 
@@ -115,8 +149,8 @@ export class SSETransport {
   close() {
     this._run = false;
     clearTimeout(this._retryT); this._retryT = null; clearInterval(this._wd); this._wd = null;
-    try { this.es && this.es.close(); } catch { /* ignore */ }
-    this.es = null; this.room = null; this._peers.clear(); this.up = false;
+    this._opening?.abort(); this._opening = null;
+    this._closeStream(); this.room = null; this._peers.clear(); this.up = false;
   }
 }
 identMixin(SSETransport);

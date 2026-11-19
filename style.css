@@ -702,3 +702,6 @@ button.gbtn, button.gbtn .gbtn-t { color: #1f1f1f !important; text-shadow: none 
 /* the stance in use on the command card (owner 2026-11-15: which one is active could not be seen) */
 .cmd.active { border-color: #f2c14e !important; background: linear-gradient(180deg, rgba(242,193,78,.30), rgba(242,193,78,.10)) !important; box-shadow: 0 0 0 1px #f2c14e inset, 0 0 12px rgba(242,193,78,.55); }
 .cmd.active::after { content: '✔'; position: absolute; right: 4px; bottom: 2px; font-size: 11px; font-weight: 700; color: #ffd76a; text-shadow: 0 1px 2px #000; }
+
+/* Profile → chat history: bound the on-screen list, even when long messages wrap. */
+.chat-history-output { max-height: 40vh; overflow: auto; overflow-wrap: anywhere; text-align: left; }

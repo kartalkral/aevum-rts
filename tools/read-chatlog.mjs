@@ -1,8 +1,8 @@
 // Aevum - read every player's multiplayer chat log from Firestore (users/{uid}/chatlog/*, written by
-// CloudSync.logChat for each line a player sends) and print it in time order.
+// CloudSync.logChat for new lines sent after opt-in, plus pre-opt-in legacy records) and print it in time order.
 //   node tools/read-chatlog.mjs [--since 2026-11-15] [--room ABCDE] [--out file.txt]
-// Needs a Firebase service-account key (Firebase console -> Project settings -> Service accounts -> Generate new
-// private key). Looked up in $AEVUM_SA, else ~/.aevum/firebase-sa.json. Never commit that file.
+// Authorized operators only; needs a service-account key with Firestore IAM query permission (see docs/sohbet-gizliligi.md).
+// Looked up in $AEVUM_SA, else ~/.aevum/firebase-sa.json. Never commit the key or output.
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
