@@ -79,19 +79,10 @@ Aevum açık kaynak; herkes geliştirebilir. Nasıl çalıştırılır, testler,
 - Yerelde (`localhost`) yeni oyun ekranında **Geliştirici modu** çıkar: tüm harita açık, sınırsız kaynak, çağ değiştirme.
 - Çok oyunculu ve hesap özellikleri için kendi Firebase projeni bağlayabilirsin (CONTRIBUTING.md).
 
-## Lisans ve varlık kaynakları
+## Lisans
 
-Kodun lisansı tüm oyun paketine veya üçüncü taraf içeriklere otomatik olarak uygulanmaz. Dosya bazlı kaynaklar, doğrulama notları ve eksik seslerin yerel kurulumu: [assets/CREDITS.md](assets/CREDITS.md).
+Bu repo, [flickrz/aevum-rts](https://github.com/flickrz/aevum-rts) projesinin değiştirilmiş bir fork’udur. Bu sürüm: [kartalkral/aevum-rts](https://github.com/kartalkral/aevum-rts).
 
-| Bileşen | Hak sahibi / kaynak | Lisans / durum | Kullanım koşulları |
-| --- | --- | --- | --- |
-| Oyun ve sunucu kodu | Aevum katkıcıları; [paket bildirimi](package.json), [lisans metni](LICENSE) | GNU AGPL v3 veya sonrası | Ticari kullanım yasaklanmaz. Dağıtım hükümlerine uyun; değiştirdiğiniz sürümle ağ üzerinden etkileşen kullanıcılara Karşılık Gelen Kaynağı ücretsiz edinme olanağı sunun (§13). |
-| 3B modeller | [Depo bildirimi](assets/LICENSE.md): atıf “Aevum” | Depo beyanı: [CC BY-NC-SA 4.0](assets/LICENSE-CC-BY-NC-SA-4.0.txt); kaynak hakları bağımsız doğrulanamadı | Beyandaki izin ticari amaçlı kullanımı kapsamaz. Paylaşımda atıf, lisans ve değişiklik bilgisi; uyarlamalarda ShareAlike koşulu geçerlidir. |
-| GLB içindeki dokular | 90 gömülü JPEG; dosya bazlı kaynak kaydı yok | Ayrı kaynak ve **lisansı doğrulanamadı** | Model klasörü beyanı var; JPEG'ler için ayrıca yeniden kullanım izni varsaymayın. Prosedürel dokular ayrı bir dosya olarak dağıtılmıyor. |
-| İkonlar | Game-icons.net yazarları; [sprite atıfları](assets/icons/LICENSE.md) ve [istisnalar](assets/CREDITS.md#kod-modeller-ve-görseller) | Çoğu CC BY 3.0, Zeromancer `heart-plus` CC0 1.0; üç yerel duruş ikonunun **lisansı doğrulanamadı** | CC BY simgelerde kaynak/yazar ve lisansı belirtin, değişiklikleri işaretleyin. CC BY ve CC0 ticari kullanımı yasaklamaz. |
-| CC0 kaynaklı sesler | Kenney ve OpenGameArt üreticileri; [dosya eşlemesi](assets/sfx/LICENSES.md) | 78 takip edilen MP3 yalnızca CC0 kaynaklarla eşlenmiş | CC0 kapsamındaki haklar bakımından ticari kullanım ve paylaşım serbesttir; aşağıdaki karışımlar ayrı incelenir. |
-| LIB/KIT sesleri ve iki top sesi karışımı | Kaynak kaydında UR.FASTEDITOR paketi ve yerel kit; karışımlarda ayrıca Thimras | **Lisansı doğrulanamadı** | 32 ses açık dışa aktarım dışında. Takip edilen `cannon_shot2.mp3` ve `cannon_shot3.mp3` de yeniden dağıtım için doğrulanmış değil. [Ayrıntılar ve yerine ses koyma](assets/CREDITS.md#sesler-dosya-kaydı-ve-fiilî-dağıtım). |
-| Fontlar | Google/Noto Emoji; sistem fontları kullanıcının cihazından | Noto Color Emoji: SIL OFL 1.1; sistem fontları depoda dağıtılmıyor | Noto font dosyasını tek başına satmayın; yeniden dağıtırken telif ve lisans metnini koruyun. |
-| Tarayıcı kütüphaneleri (CDN) | Three.js yazarları, Arseny Kapoulkine, Google/Firebase | Three.js ve MeshoptDecoder: MIT; Firebase SDK: Apache-2.0 ([kaynak notları](assets/CREDITS.md#cdn-fontlar-ve-marka-işaretleri)) | Yeniden paketlerken ilgili lisans ve telif bildirimlerini koruyun. Firebase hizmet koşulları SDK lisansından ayrıdır. |
-| Google giriş işareti | Google; [giriş düğmesi yönergeleri](https://developers.google.com/identity/branding-guidelines) | Depodaki SVG'nin ayrı **lisansı doğrulanamadı** | Yönergeler işaret için genel bir açık lisans değildir. |
-| Aevum adı ve logosu | [Mevcut ad politikası](CONTRIBUTING.md#name), [varlık bildirimi](assets/LICENSE.md) | Mevcut depo politikasına göre bu lisansların dışında | Depo politikası fork'larda farklı bir ad kullanılmasını istiyor. Ayrı bir izin veya tescil durumu doğrulanmadı. |
+Kodun lisansı kökteki [LICENSE](LICENSE) dosyasında belirtilir. Modeller, ikonlar, sesler ve diğer üçüncü taraf içerikler kendi lisanslarına tabi olabilir. Ticari kullanım veya yeniden dağıtım öncesinde [varlık lisanslarını](assets/LICENSE.md), [ikon atıflarını](assets/icons/LICENSE.md) ve [ses kaynaklarını](assets/sfx/LICENSES.md) ayrıca kontrol edin. Aevum adı ve logosu için [mevcut proje politikasına](CONTRIBUTING.md#name) bakın.
+
+Game-icons.net’ten alınan `badges/crown`, `badges/shield` ve `badges/star` ikonları [Delapouite](https://github.com/game-icons/icons/commit/e6fd03f28d7a48ac17af88b2e3ac35aed56b6994) tarafından eklenmiştir; sprite’a alınırken renkleri kaldırılmıştır ([CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)).
