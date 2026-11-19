@@ -6,6 +6,7 @@ import { avatarEl, confirmDeleteSave, loginScreen, menuHud, saveBadge, saveBadge
 import { firstLaunch } from './profile-ui.js';
 import { CLIMATE_OPTS, el, esc, hex, MAP_TYPE_TR, MAP_TYPES, safe } from './ui-shared.js';
 
+// developer mode (a sandbox game: no TP, no match history): offered on a local dev server, or with ?dev=1 in the URL
 function devModeOffered() {
   try {
     const h = location.hostname;
