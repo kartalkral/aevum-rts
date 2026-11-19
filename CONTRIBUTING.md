@@ -28,6 +28,10 @@ Playing requires a Google sign-in through Firebase (Auth + Firestore, free Spark
 
 See [static files, logging and SSE deployment notes](docs/sunucu-siniri.md).
 
+## Module map
+
+See the [module map and replay comparison](docs/sorumluluk-haritasi.md) before changing simulation, AI or UI boundaries.
+
 ## Tests
 
 Plain Node scripts in `test/`, no framework:
