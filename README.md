@@ -45,6 +45,10 @@ Bina yerleştirirken: sol tık yerleştirir, Shift basılıyken yerleştirmeye d
 - Savaş sisi, tarla döngüsü, kayıt / yükleme (tarayıcıda IndexedDB), 90 saniyede bir otomatik kayıt
 - Ana menünün arkasında kendi kendine oynayan demo sahne
 
+## Sohbet gizliliği
+
+Bulut sohbet geçmişi varsayılan olarak kapalıdır. **Profil → Sohbet Geçmişi** üzerinden yerel ve bulut kayıtlarını ayrı ayrı görüntüleyebilir, JSON olarak indirebilir ve silebilirsin. [Saklama, hesap silme ve Firestore yapılandırması](docs/sohbet-gizliligi.md).
+
 ## Dürüst notlar
 
 - Modüller paralel yazıldı; bu sürümde uçtan uca oyun testi yapılmadı, hata çıkabilir.

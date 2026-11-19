@@ -24,6 +24,10 @@ Playing requires a Google sign-in through Firebase (Auth + Firestore, free Spark
 - For offline tests the server accepts `AEVUM_NO_AUTH=1` (local only, never in production).
 - Never commit keys, service-account files (`*firebase-sa*.json`, `*-adminsdk-*.json`) or `.env` files.
 
+## Server boundaries
+
+See [static files, logging and SSE deployment notes](docs/sunucu-siniri.md).
+
 ## Tests
 
 Plain Node scripts in `test/`, no framework:

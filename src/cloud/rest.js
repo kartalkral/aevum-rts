@@ -123,12 +123,13 @@ export function firestoreApi({ fetch: fetchFn, projectId, token, timeoutMs = 300
     async get(path) {
       try { return toDoc(await req('GET', url(path))); } catch (e) { if (e.kind === 'notfound') return null; throw e; }
     },
-    // writes: [{set: path, data, mustNotExist?, serverTime?: [field]}, {del: path}] -> commit response
+    // writes: [{set: path, data, mustNotExist?, updateTime?, serverTime?: [field]}, {del: path}] -> commit response
     commit(writes, tmo) {
       const w = writes.map((x) => {
         if (x.del) return { delete: name(x.del) };
         const o = { update: { name: name(x.set), fields: encodeFields(x.data) } };
         if (x.mustNotExist) o.currentDocument = { exists: false };
+        else if (x.updateTime) o.currentDocument = { updateTime: x.updateTime };
         if (x.serverTime && x.serverTime.length) o.updateTransforms = x.serverTime.map((f) => ({ fieldPath: f, setToServerValue: 'REQUEST_TIME' }));
         return o;
       });
@@ -138,7 +139,10 @@ export function firestoreApi({ fetch: fetchFn, projectId, token, timeoutMs = 300
     async query(parentPath, q) {
       const sq = Object.assign({ from: [{ collectionId: q.collection }] }, q.structured || {});
       const res = await req('POST', url(parentPath) + ':runQuery', { structuredQuery: sq });
-      return (Array.isArray(res) ? res : []).filter((r) => r && r.document).map((r) => toDoc(r.document));
+      if (!Array.isArray(res) || res.some((r) => !r || r.error || (r.document && !r.document.name))) {
+        throw new CloudError('server', 'INVALID_QUERY_RESPONSE', 'Bulut sorgusu tamamlanamadı.');
+      }
+      return res.filter((r) => r && r.document).map((r) => toDoc(r.document));
     },
     // -> Map(path -> doc|null)
     async batchGet(paths) {

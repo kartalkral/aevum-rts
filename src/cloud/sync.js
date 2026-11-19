@@ -11,6 +11,8 @@
 //   users/{fb}/matches/{recordId}   {j: record JSON, e: endedAt, t: server time}   (incremental sync by t)
 //   users/{fb}/saves/{key}          {name, time, mp, code, tick, me, players, hash, matchId, auto, size, chunks, sha, enc, up}
 //   users/{fb}/saves/{key}/chunks/{gen}-{i} {i, sha, d: base64 part}   (gen: the save's sha prefix; old saves: chunks/{i})
+//   users/{fb}/meta/chat            {mode: cloud consent / deletion state}
+//   users/{fb}/chatlog/{id}          {t, room, name, text, uid, at, expiresAt}
 //   names/{lowercased name}         {uid: fb}
 //   profiles/{fb}                   {name, games, wins, avatar, updated}
 import * as P from '../profile.js';
@@ -20,6 +22,8 @@ import { firestoreApi, CloudError } from './rest.js';
 import { packSave, unpackSave } from './codec.js';
 import { isAvatar, defaultAvatar, avatarOf } from '../avatars.js';
 
+export const CHAT_RETENTION_DAYS = 30;
+const CHAT_PAGE = 200;
 export const MAX_CLOUD_SAVES = 30;
 export const AUTO_UPLOAD_MS = 5 * 60 * 1000;        // autosaves: at most one upload per game every 5 minutes
 export const HIST_PAGE = 200;
@@ -161,14 +165,100 @@ export class CloudSync {
     this._listeners = new Set();
   }
 
-  // ---------- chat log (owner 2026-11-15: revisions are agreed over chat; read back with tools/read-chatlog.mjs) ----------
-  // one chat line this player SENT -> users/{uid}/chatlog/{id} (each line is written once, by its sender). Best effort:
-  // a failed write is dropped (the browser keeps its own copy, src/chatlog.js).
-  logChat(e) {
-    if (!this.auth.user || !e || !e.text) return Promise.resolve(false);
-    const id = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
-    const data = { t: String(e.t || ''), room: String(e.room || ''), name: String(e.name || '').slice(0, 40), text: String(e.text).slice(0, 200), uid: this.auth.user.uid, at: null };
-    return this.fs.commit([{ set: this._base() + '/chatlog/' + id, data, serverTime: ['at'] }]).then(() => true, () => false);
+  // ---------- chat history ----------
+  _chatContext() {
+    if (!this.loggedIn) throw new CloudError('auth', 'NO_SESSION', 'Giriş yapılmadı.');
+    return { base: this._base(), sid: this._sid(), uid: this.user.uid };
+  }
+  async _chatSetting(ctx) {
+    this._alive(ctx.sid);
+    const doc = await this.fs.get(ctx.base + '/meta/chat');
+    this._alive(ctx.sid);
+    return doc;
+  }
+  _chatSettingWrite(ctx, doc, mode) {
+    return { set: ctx.base + '/meta/chat', data: { mode }, mustNotExist: !doc, updateTime: doc?.updateTime };
+  }
+  async chatHistoryMode() {
+    const doc = await this._chatSetting(this._chatContext());
+    return doc?.data.mode || 'off';
+  }
+  async setChatHistoryEnabled(enabled) {
+    const ctx = this._chatContext();
+    const doc = await this._chatSetting(ctx);
+    if (this._accountDeleting || ['delete-history', 'delete-account'].includes(doc?.data.mode)) {
+      throw new Error('Önce devam eden silme işlemini tamamla.');
+    }
+    if (enabled) {
+      const profile = await this.fs.get(ctx.base + '/meta/profile');
+      this._alive(ctx.sid);
+      if (!profile || this._accountDeleting) throw new Error('Hesap kullanılabilir durumda değil.');
+    }
+    await this.fs.commit([this._chatSettingWrite(ctx, doc, enabled === true ? 'on' : 'off')]);
+    this._alive(ctx.sid);
+  }
+  // Only newly sent lines; no backfill or retry queue. The conditional update and the line are atomic:
+  // if another tab changes consent or starts deleting after this read, the entire stale write fails.
+  async logChat(e) {
+    if (!this.loggedIn || this.auth.dead || this._accountDeleting || !e?.text) return false;
+    try {
+      const ctx = this._chatContext();
+      const doc = await this._chatSetting(ctx);
+      if (doc?.data.mode !== 'on' || this._accountDeleting) return false;
+      const id = Array.from(globalThis.crypto.getRandomValues(new Uint32Array(4)), (x) => x.toString(16).padStart(8, '0')).join('');
+      const expiresAt = new Date(this.now() + CHAT_RETENTION_DAYS * 86400000).toISOString();
+      const data = { t: String(e.t || ''), room: String(e.room || ''), name: String(e.name || '').slice(0, 40), text: String(e.text).slice(0, 200), uid: ctx.uid, expiresAt: { __ts: expiresAt } };
+      await this.fs.commit([this._chatSettingWrite(ctx, doc, 'on'), { set: ctx.base + '/chatlog/' + id, data, mustNotExist: true, serverTime: ['at'] }]);
+      return true;
+    } catch { return false; }
+  }
+  async _chatPage(ctx, after) {
+    this._alive(ctx.sid);
+    const structured = { orderBy: [{ field: { fieldPath: '__name__' } }], limit: CHAT_PAGE };
+    if (after) structured.startAt = { values: [{ referenceValue: after }], before: false };
+    const docs = await this.fs.query(ctx.base, { collection: 'chatlog', structured });
+    this._alive(ctx.sid);
+    return docs;
+  }
+  async listChatHistory() {
+    const ctx = this._chatContext(), rows = [];
+    let after;
+    for (;;) {
+      const docs = await this._chatPage(ctx, after);
+      for (const d of docs) rows.push({ ...d.data, id: d.id });
+      if (docs.length < CHAT_PAGE) return rows.sort((a, b) => String(b.at || b.t || '').localeCompare(String(a.at || a.t || '')));
+      after = docs[docs.length - 1].name;
+    }
+  }
+  async _drainChatHistory(ctx, mode) {
+    const doc = await this._chatSetting(ctx);
+    if (doc?.data.mode === 'delete-account' && mode !== 'delete-account') throw new Error('Hesap silme işlemini yeniden dene.');
+    if (doc?.data.mode !== mode) await this.fs.commit([this._chatSettingWrite(ctx, doc, mode)]);
+    // Start at the first remaining page after any failure, including a lost commit response.
+    // Bind each batch to the current lock so a second device finishing or escalating the deletion
+    // cannot make an older batch run after consent is restored.
+    for (;;) {
+      const lock = await this._chatSetting(ctx);
+      if (lock?.data.mode !== mode) throw new Error('Silme durumu değişti. Geçmişi yenile ve yeniden dene.');
+      const docs = await this._chatPage(ctx);
+      if (!docs.length) {
+        if (mode === 'delete-history') await this.fs.commit([this._chatSettingWrite(ctx, lock, 'off')]);
+        this._alive(ctx.sid);
+        return;
+      }
+      const writes = docs.map((d) => ({ del: ctx.base + '/chatlog/' + d.id }));
+      await this.fs.commit([this._chatSettingWrite(ctx, lock, mode), ...writes]);
+    }
+  }
+
+  async deleteChatHistory() {
+    if (this._accountDeleting || this._chatDeleting) return fail('Silme işlemi zaten devam ediyor.');
+    this._chatDeleting = true;
+    try {
+      await this._drainChatHistory(this._chatContext(), 'delete-history');
+      return { ok: true };
+    } catch (e) { return fail('Bulut sohbet geçmişi tamamen silinemedi. Silmeyi yeniden dene. ' + authMessage(e)); }
+    finally { this._chatDeleting = false; }
   }
 
   // ---------- state ----------
@@ -652,22 +742,32 @@ export class CloudSync {
 
   // ---------- delete the account ----------
   // Google asks for a fresh sign in first (Firebase refuses to delete an account signed in long ago); then every
-  // document of the account goes, then the Firebase account itself. local: {history(uid), saves(uid)} cleanup hooks.
+  // document of the account goes, then the Firebase account itself. localChat(fb) and local(profileUid) are cleanup hooks.
   async deleteAccount(opts = {}) {
     if (!this.loggedIn) return fail('Giriş yapılmadı.');
-    const fb = this.auth.user.uid;
+    if (this._accountDeleting || this._chatDeleting) return fail('Silme işlemi zaten devam ediyor.');
+    this._accountDeleting = true;
+    try { return await this._deleteAccount(opts); } finally { this._accountDeleting = false; }
+  }
+  async _deleteAccount(opts) {
+    const fb = this.auth.user.uid, before = this._sid();
     if (opts.reauth !== false && this.google) {
       let c;
       try { c = await this.google.signIn({ allowRedirect: false }); } catch (e) { return this._googleFail(e); }
       if (!c || c.uid !== fb) { try { await this.google.clear(); } catch (e) { /* ignore */ } return fail('Silmek için aynı Google hesabını seçmelisin.'); }
-      try { await this.auth.adopt(c); } catch (e) { return fail(authMessage(e)); }
+      try { this._alive(before); await this.auth.adopt(c); } catch (e) { return fail(authMessage(e)); }
     }
     const p = this.o.profile.get();
     try {
-      const base = 'users/' + fb;
+      const ctx = this._chatContext(), { base, sid } = ctx;
+      await this._busy;
+      await this._drainChatHistory(ctx, 'delete-account');
+      this._alive(sid);
+      if (opts.localChat) await opts.localChat(fb);
       const dels = [];
       for (let page = 0; page < 20; page++) {
         const docs = await this.fs.query(base, { collection: 'matches', structured: { limit: 300 } });
+        this._alive(sid);
         if (!docs.length) break;
         await this._delAll(docs.map((d) => base + '/matches/' + d.id));
         if (docs.length < 300) break;
@@ -682,9 +782,13 @@ export class CloudSync {
       dels.push(base + '/meta/profile', base + '/meta/tp', 'profiles/' + fb);
       const names = new Set([this._st().name, p && p.name].filter(Boolean).map((n) => nameKey(n)));
       for (const k of names) { const d = await this.fs.get('names/' + k); if (d && d.data.uid === fb) dels.push('names/' + k); }
+      this._alive(sid);
       await this._delAll(dels);
+      this._alive(sid);
+      await this._delAll([base + '/meta/chat']);
+      this._alive(sid);
       await this.auth.deleteAccount();
-    } catch (e) { return fail(e.kind === 'network' ? 'Çevrimdışı: hesap şu an silinemiyor.' : authMessage(e)); }
+    } catch (e) { return fail('Hesap silme tamamlanamadı. İşlem kısmen uygulanmış olabilir; silmeyi yeniden dene. ' + authMessage(e)); }
     lsDel(this.ls, STATE_PREFIX + fb);
     this._stCache = null; this._saveList = null; this._tkt = null;
     if (this.google) { try { await this.google.clear(); } catch (e) { /* ignore */ } }
@@ -820,7 +924,7 @@ export class CloudSync {
   // ---------- sync loop ----------
   // pull: also fetch new history. Concurrent calls coalesce; the returned promise never rejects.
   flush(opts = {}) {
-    if (!this.loggedIn) return Promise.resolve({ ok: false, added: 0 });
+    if (!this.loggedIn || this._accountDeleting) return Promise.resolve({ ok: false, added: 0 });
     const sid = this._sid();
     if (this._busy) {
       // a loop of an earlier session (signed out / switched meanwhile): run after it ends instead of joining it

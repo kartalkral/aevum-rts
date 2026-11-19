@@ -1,7 +1,6 @@
 // Aevum - tiny dependency-free static file server (works as CommonJS or ES module).
 (async () => {
   const http = await import('node:http');
-  const fs = await import('node:fs');
   const path = await import('node:path');
 
   const ROOT = path.dirname(path.resolve(process.argv[1]));
@@ -9,6 +8,12 @@
   // verified player identity (srv/identity.mjs): Firebase ID token -> relay ticket; TP ledger.
   // AEVUM_NO_AUTH=1 (local tests only): the relay also accepts peers without a ticket and dev identities.
   const { pathToFileURL } = await import('node:url');
+  const { requestPath, createStaticHandler } = await import('./srv/static.mjs');
+  const { logServerError: logErr } = await import('./srv/logging.mjs');
+  const { createSseTickets } = await import('./srv/sse-tickets.mjs');
+  const serveStatic = createStaticHandler(ROOT);
+  const sseTickets = createSseTickets();
+  setInterval(sseTickets.sweep, 20_000).unref();
   const IDM = await import(pathToFileURL(path.join(ROOT, 'srv', 'identity.mjs')).href);
   const NO_AUTH = /^(1|true|yes)$/i.test(process.env.AEVUM_NO_AUTH || '');
   const KEYS = IDM.keysFromEnv(process.env);
@@ -29,15 +34,6 @@
   setInterval(() => { STATS.flush().catch(() => {}); }, 3 * 60 * 1000).unref();
   // a deploy or a restart: write the last minutes of numbers before going
   for (const sig of ['SIGTERM', 'SIGINT']) process.once(sig, () => { const end = () => process.exit(0); STATS.flush().then(end, end); setTimeout(end, 4000).unref(); });
-  const MIME = {
-    '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
-    '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.md': 'text/markdown; charset=utf-8',
-    '.txt': 'text/plain; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-    '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
-    '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.glb': 'model/gltf-binary',
-    '.woff2': 'font/woff2', '.wasm': 'application/wasm',
-  };
-
   // ---- multiplayer relay: in-memory rooms; SSE or long-polling down, POST up ----
   // Every peer is an object { send(obj), end(), sse|poll }; nothing here may throw into the event loop.
   // The relay keeps no game state: after a restart the clients reconnect with the same peer ids and rebuild the rooms.
@@ -94,7 +90,7 @@
     for (const [fb, b] of inboxes) if (!b.waiter && t - b.seen > 10 * 60000) inboxes.delete(fb);
     for (const [fb, l] of inviteRate) if (!l.some(x => t - x < 60000)) inviteRate.delete(fb);
   }, 60000).unref();
-  // the identity of a request: ticket in the X-Aevum-Ticket header or the tk query parameter (EventSource cannot set headers)
+  // The general relay ticket is never accepted by /mp/events; legacy query auth is for other transports.
   function identOf(req, url) {
     const tk = req.headers['x-aevum-ticket'] || url.searchParams.get('tk') || '';
     return tk ? ID.checkTicket(String(tk)) : null;
@@ -131,7 +127,7 @@
   }
   function readBody(req, max, cb) {
     const chunks = []; let size = 0, done = false;
-    const finish = (err, buf) => { if (done) return; done = true; try { cb(err, buf); } catch (e) { logErr('body cb', e); } };
+    const finish = (err, buf) => { if (done) return; done = true; try { cb(err, buf); } catch (e) { logErr('body cb', e, req); } };
     req.on('data', c => { if (done) return; size += c.length; if (size > max) { chunks.length = 0; finish('big'); return; } chunks.push(c); });
     req.on('end', () => finish(null, Buffer.concat(chunks)));
     req.on('error', () => finish('err'));
@@ -268,7 +264,7 @@
       const me = identOf(req, url);
       if (!me) { reply(res, 401, J, '{"error":"ticket"}'); return; }
       if (!OWNERS.has(me.fb)) { reply(res, 403, J, '{"error":"owner"}'); return; }
-      STATS.report(30).then(r => reply(res, 200, J, JSON.stringify(r)), e => { logErr('stats', e); reply(res, 500, J, '{"error":"stats"}'); });
+      STATS.report(30).then(r => reply(res, 200, J, JSON.stringify(r)), e => { logErr('stats', e, req); reply(res, 500, J, '{"error":"stats"}'); });
       return;
     }
     // ---- friends: online status + room invites (an inbox per verified account; memory only) ----
@@ -324,7 +320,7 @@
         if (url.pathname === '/mp/auth') {
           ID.auth(body).then((r) => reply(res, 200, J, JSON.stringify(Object.assign(r, OWNERS.has(r.ident.fb) ? { owner: true } : {}))), (e) => {
             if (e instanceof IDM.IdentityError) { fail(e.status, e.message); return; }
-            logErr('auth', e); fail(503, 'Kimlik şu an doğrulanamadı.');
+            logErr('auth', e, req); fail(503, 'Kimlik şu an doğrulanamadı.');
           });
           return;
         }
@@ -335,22 +331,34 @@
           else if (url.pathname === '/mp/tp/claim') reply(res, 200, J, JSON.stringify(ID.matchClaim(me, body)));
           else if (url.pathname === '/mp/tp/info') reply(res, 200, J, JSON.stringify(ID.ledgerInfo(me, body.ledger)));
           else reply(res, 404, {}, '');
-        } catch (e) { logErr('tp', e); fail(500, 'Sunucu hatası.'); }
+        } catch (e) { logErr('tp', e, req); fail(500, 'Sunucu hatası.'); }
       });
       return;
     }
     if (!okName(room) || !okName(peer)) { reply(res, 400, {}, 'bad room/peer'); return; }
-    const ident = identOf(req, url);
-    if (!ident && !NO_AUTH) { reply(res, 401, J, '{"error":"ticket"}'); return; }
+    const sse = url.pathname === '/mp/events', issueSse = url.pathname === '/mp/sse-ticket';
+    if ((sse && req.method !== 'GET') || (issueSse && req.method !== 'POST')) {
+      reply(res, 405, { Allow: sse ? 'GET' : 'POST' }, ''); return;
+    }
+    const grant = sse ? sseTickets.consume(url.searchParams.get('st'), room, peer) : null;
+    const header = issueSse && req.headers['x-aevum-ticket'];
+    const ident = sse ? grant?.ident : issueSse ? (header ? ID.checkTicket(String(header)) : null) : identOf(req, url);
+    if ((sse && !grant) || (!ident && (!NO_AUTH || header))) { reply(res, 401, J, '{"error":"ticket"}'); return; }
     if (kicked.has(room + ' ' + peer)) { reply(res, 409, J, '{"error":"dup"}'); return; }
     // a peer id belongs to the identity that registered it
     const known = rooms.get(room) && rooms.get(room).get(peer);
-    if (known && known.ident && (!ident || ident.uid !== known.ident.uid)) { reply(res, 403, J, '{"error":"peer"}'); return; }
-    if (url.pathname === '/mp/events' && req.method === 'GET') {
+    const ownerKey = sse || issueSse ? 'fb' : 'uid';
+    if (known && known.ident && (!ident || ident[ownerKey] !== known.ident[ownerKey])) { reply(res, 403, J, '{"error":"peer"}'); return; }
+    if (issueSse) {
+      const ticket = sseTickets.issue(room, peer, ident);
+      if (!ticket) { reply(res, 429, J, '{"error":"full"}'); return; }
+      reply(res, 200, J, JSON.stringify({ ticket }));
+      return;
+    }
+    if (sse) {
       const r0 = rooms.get(room);
       if ((!r0 && rooms.size >= MAX_ROOMS) || (r0 && !r0.has(peer) && r0.size >= MAX_PEERS)) { reply(res, 429, {}, 'full'); return; }
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-      try { res.write('retry: 1500\n\n'); } catch { /* ignore */ }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', 'Referrer-Policy': 'no-referrer' });
       const pe = makeSsePeer(room, peer, res);
       pe.ident = ident;
       addPeer(room, peer, pe, getRoom(room));
@@ -411,49 +419,32 @@
   }
 
   // Never let one bad request or a dropped connection take the whole server (and every running match) down.
-  const logErr = (tag, e) => { try { const line = new Date().toISOString() + ' ' + tag + ' ' + (e && e.stack || e) + String.fromCharCode(10); console.error(line); fs.appendFileSync(path.join(ROOT, 'server-error.log'), line); } catch { /* ignore */ } };
   process.on('uncaughtException', e => logErr('uncaughtException', e));
   process.on('unhandledRejection', e => logErr('unhandledRejection', e));
 
   const server = http.createServer((req, res) => {
     req.on('error', () => {}); res.on('error', () => {});
-    try { handle(req, res); } catch (e) { logErr('request ' + req.url, e); try { if (!res.headersSent) res.writeHead(500); res.end(); } catch { /* ignore */ } }
+    handle(req, res).catch(e => { logErr('request', e, req); if (res.headersSent) res.destroy(); else reply(res, 500, {}, ''); });
   });
   server.on('clientError', (e, socket) => { try { socket.destroy(); } catch { /* ignore */ } });
   server.on('upgrade', (req, socket) => {
     socket.on('error', () => {});
-    try { handleUpgrade(req, socket); } catch (e) { logErr('upgrade ' + req.url, e); try { socket.destroy(); } catch { /* ignore */ } }
+    if (requestPath(req.url) !== '/mp/ws') { socket.destroy(); return; }
+    try { handleUpgrade(req, socket); } catch (e) { logErr('upgrade', e, req); try { socket.destroy(); } catch { /* ignore */ } }
   });
-  function handle(req, res) {
-    if ((req.url || '').startsWith('/mp/')) {
-      let url; try { url = new URL(req.url, 'http://x'); } catch { res.writeHead(400); res.end(); return; }
+  async function handle(req, res) {
+    const pathname = requestPath(req.url);
+    if (!pathname) { reply(res, 400, {}, 'Bad request'); return; }
+    if (pathname.startsWith('/mp/')) {
+      const url = new URL(req.url, 'http://x');
       handleMp(req, res, url); return;
     }
-    let rel;
-    try { rel = decodeURIComponent((req.url || '/').split('?')[0].split('#')[0]); }
-    catch { res.writeHead(400); res.end('Bad request'); return; }
-    if (rel.endsWith('/')) rel += 'index.html';
-    const file = path.normalize(path.join(ROOT, rel));
-    if (file !== ROOT && !file.startsWith(ROOT + path.sep)) { res.writeHead(403); res.end('Forbidden'); return; }
-    fs.stat(file, (err, st) => {
-      if (err || !st.isFile()) {
-        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('404 - Bulunamadi: ' + rel);
-        return;
-      }
-      res.writeHead(200, {
-        'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
-        'Content-Length': st.size,
-        'Cache-Control': 'no-store, no-cache, must-revalidate',
-      });
-      if (req.method === 'HEAD') { res.end(); return; }
-      fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
-    });
+    await serveStatic(req, res, pathname);
   }
   let listening = false;
   server.on('error', e => {
     if (e && e.code === 'EADDRINUSE') { console.error(`Port ${PORT} kullanimda. Oyun zaten acik olabilir: http://localhost:${PORT}`); process.exit(1); }
-    if (!listening) { console.error(e); process.exit(1); }
+    if (!listening) { logErr('startup', e); process.exit(1); }
     logErr('server', e); // a runtime error (e.g. EMFILE) must not end every running match
   });
   // SSE / long-poll responses stay open; never let the http defaults cut them
