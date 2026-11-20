@@ -1,5 +1,5 @@
 @echo off
-rem Aevum - arkadasinla internet uzerinden oynamak icin.
+rem Kartal RTS - arkadasinla internet uzerinden oynamak icin.
 rem Oyun sunucusunu baslatir ve localhost.run uzerinden gecici bir internet adresi acar.
 rem Bu pencere acik kaldigi surece adres calisir; kapatinca adres de kapanir.
 cd /d "%~dp0"
@@ -17,7 +17,7 @@ if errorlevel 1 (
 )
 
 rem Sunucu zaten aciksa ikinci kopya kendiliginden kapanir, sorun degil.
-start "Aevum sunucu" /min cmd /c "for /l %%i in (1,1,9999) do (node server.js & timeout /t 1 /nobreak >nul)"
+start "Kartal RTS sunucu" /min cmd /c "for /l %%i in (1,1,9999) do (node server.js & timeout /t 1 /nobreak >nul)"
 timeout /t 2 /nobreak >nul
 
 rem Cloudflare tuneli kuruluysa onu kullan: cok daha hizli.

@@ -144,7 +144,7 @@ assert.ok(a.loggedIn && f.userByEmail('Alice@example.test'));
 assert.deepEqual(navigation, [], 'no success UI on Auth error');
 
 await button.onclick();
-assert.deepEqual(navigation, ['Aevum hesabı silindi.']);
+assert.deepEqual(navigation, ['Kartal RTS hesabı silindi.']);
 assert.ok(!a.loggedIn && !f.userByEmail('Alice@example.test'));
 assert.deepEqual(f.paths(base + '/'), []);
 assert.equal((await b.listChatHistory()).length, 1, 'account deletion leaves the other account alone');

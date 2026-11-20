@@ -18,13 +18,13 @@ export function accountDeleteButton(ui, say) {
   const { app } = ui, cloud = app.cloud, uid = cloud.user.uid;
   const b = button('Hesabı Sil', async () => {
     if (b.disabled || cloud.user?.uid !== uid) return;
-    if (!confirm('Aevum hesabın ve buluttaki sohbetlerin kalıcı olarak silinsin mi? Bu tarayıcıdaki hesabına ait sohbet geçmişi de silinir. Diğer cihazlardaki ve indirilmiş kopyalar kalır. Bu işlem geri alınamaz.')) return;
+    if (!confirm('Kartal RTS hesabın ve buluttaki sohbetlerin kalıcı olarak silinsin mi? Bu tarayıcıdaki hesabına ait sohbet geçmişi de silinir. Diğer cihazlardaki ve indirilmiş kopyalar kalır. Bu işlem geri alınamaz.')) return;
     b.disabled = true;
     say('Hesap siliniyor…', false);
     try {
       const r = await cloud.deleteAccount({ localChat: removeLocalChatAccount, local: (id) => app.forgetLocalData(id) });
       if (!r.ok) { say(r.error || 'Hesap silinmedi. Yeniden dene.', false); return; }
-      ui._menuMain('Aevum hesabı silindi.');
+      ui._menuMain('Kartal RTS hesabı silindi.');
     } catch (e) { say('Hesap silme doğrulanamadı. Yeniden dene. ' + authMessage(e), false); }
     finally { b.disabled = false; }
   });
@@ -34,7 +34,7 @@ export function accountDeleteButton(ui, say) {
 function download(rows, source) {
   const url = URL.createObjectURL(new Blob([JSON.stringify({ source, messages: rows }, null, 2)], { type: 'application/json' }));
   const a = h('a'); a.href = url;
-  a.download = `aevum-sohbet-${source}-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `kartal-rts-sohbet-${source}-${new Date().toISOString().slice(0, 10)}.json`;
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

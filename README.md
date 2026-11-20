@@ -1,6 +1,6 @@
-# Aevum
+# Kartal RTS
 
-**Oyna:** https://aevum-8clf.onrender.com · **English:** see [CONTRIBUTING.md](CONTRIBUTING.md)
+**Yerelde oyna:** `node server.js` → <http://localhost:5173> · **English:** see [CONTRIBUTING.md](CONTRIBUTING.md)
 
 Tarayıcıda çalışan, özgün bir 3B gerçek zamanlı strateji oyunu. Taş Devri'nden Sanayi Çağı'na beş çağ boyunca köy kur, kaynak topla, ordu bas, rakibi yık.
 
@@ -74,15 +74,14 @@ Bulut sohbet geçmişi varsayılan olarak kapalıdır. **Profil → Sohbet Geçm
 
 ## Geliştirmeye katıl
 
-Aevum açık kaynak; herkes geliştirebilir. Nasıl çalıştırılır, testler, PR kuralları: [CONTRIBUTING.md](CONTRIBUTING.md).
+Kartal RTS açık kaynak; herkes geliştirebilir. Nasıl çalıştırılır, testler, PR kuralları: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - Yerelde (`localhost`) yeni oyun ekranında **Geliştirici modu** çıkar: tüm harita açık, sınırsız kaynak, çağ değiştirme.
 - Çok oyunculu ve hesap özellikleri için kendi Firebase projeni bağlayabilirsin (CONTRIBUTING.md).
 
 ## Lisans
 
-Bu repo, [flickrz/aevum-rts](https://github.com/flickrz/aevum-rts) projesinin değiştirilmiş bir fork’udur. Bu sürüm: [kartalkral/aevum-rts](https://github.com/kartalkral/aevum-rts).
+**Kartal RTS**, flickrz ve orijinal katkıcıların [Aevum projesinden](https://github.com/flickrz/aevum-rts) türetilmiştir. Bu çatalın [kaynak kodu](https://github.com/kartalkral/aevum-rts) ayrı depodadır. Orijinal ad ve logo için [upstream politikasına](CONTRIBUTING.md#name) bakın.
 
-Kodun lisansı kökteki [LICENSE](LICENSE) dosyasında belirtilir. Modeller, ikonlar, sesler ve diğer üçüncü taraf içerikler kendi lisanslarına tabi olabilir. Ticari kullanım veya yeniden dağıtım öncesinde [varlık lisanslarını](assets/LICENSE.md), [ikon atıflarını](assets/icons/LICENSE.md) ve [ses kaynaklarını](assets/sfx/LICENSES.md) ayrıca kontrol edin. Aevum adı ve logosu için [mevcut proje politikasına](CONTRIBUTING.md#name) bakın.
-
-Game-icons.net’ten alınan `badges/crown`, `badges/shield` ve `badges/star` ikonları [Delapouite](https://github.com/game-icons/icons/commit/e6fd03f28d7a48ac17af88b2e3ac35aed56b6994) tarafından eklenmiştir; sprite’a alınırken renkleri kaldırılmıştır ([CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)).
+- **Kod:** [GNU AGPL-3.0-or-later](LICENSE). Değiştirilmiş sürümü ağ üzerinden sunuyorsanız, kullanıcılarına o sürümün **Karşılık Gelen Kaynağını** ücretsiz ve standart bir yöntemle edinme olanağı verin (AGPL §13). Giriş, ana menü ve oyun menüsündeki **Kaynak kodu** bağlantısını canlıya almadan önce doğrulayın; [dağıtım notlarında](CONTRIBUTING.md#public-deployments) sürümün nasıl sabitleneceği açıklanıyor.
+- **Varlıklar:** Modeller, ikonlar ve sesler kodun AGPL lisansına dahil değildir. Ticari kullanım veya yeniden dağıtım öncesinde [varlık lisanslarını](assets/LICENSE.md), [ikon atıflarını](assets/icons/LICENSE.md), [ses kaynaklarını](assets/sfx/LICENSES.md) ve [kaynak envanterini](assets/CREDITS.md) kontrol edin. Yeniden dağıtım izni belgelenmemiş LIB/KIT seslerini veya bunları içeren karışımları açık sürüme eklemeyin.

@@ -13,6 +13,11 @@
   const { requestPath, createStaticHandler } = await import('./srv/static.mjs');
   const { logServerError: logErr } = await import('./srv/logging.mjs');
   const { createSseTickets } = await import('./srv/sse-tickets.mjs');
+  const { sourceLink } = await import('./srv/source-link.mjs');
+  const source = sourceLink(process.env);
+  if (!source.pinned && (process.env.RENDER || process.env.NODE_ENV === 'production')) {
+    console.warn('Kaynak kodu baglantisi surume sabitlenmedi: KARTAL_SOURCE_COMMIT ayarini kontrol edin.');
+  }
   const serveStatic = createStaticHandler(ROOT);
   const sseTickets = createSseTickets();
   setInterval(sseTickets.sweep, 20_000).unref();
@@ -492,6 +497,11 @@
   async function handle(req, res) {
     const pathname = requestPath(req.url);
     if (!pathname) { reply(res, 400, {}, 'Bad request'); return; }
+    if (pathname === '/source') {
+      const headers = { 'Cache-Control': 'no-store' };
+      if (req.method !== 'GET' && req.method !== 'HEAD') { reply(res, 405, { ...headers, Allow: 'GET, HEAD' }); return; }
+      reply(res, 302, { ...headers, Location: source.url }); return;
+    }
     if (pathname.startsWith('/mp/')) {
       const url = new URL(req.url, 'http://x');
       handleMp(req, res, url); return;
@@ -508,7 +518,7 @@
   server.requestTimeout = 0; server.headersTimeout = 60000; server.keepAliveTimeout = 30000;
   server.listen(PORT, '0.0.0.0', async () => {
     listening = true;
-    console.log(`Aevum calisiyor: http://localhost:${PORT}  (kapatmak icin Ctrl+C)`);
+    console.log(`Kartal RTS calisiyor: http://localhost:${PORT}  (kapatmak icin Ctrl+C)`);
     try {
       const os = await import('node:os');
       const ips = [];
