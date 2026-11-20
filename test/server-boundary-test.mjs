@@ -9,11 +9,14 @@ import { fileURLToPath } from 'node:url';
 import { createStaticHandler, requestPath } from '../srv/static.mjs';
 import { logServerError, sanitizeForLog } from '../srv/logging.mjs';
 import { createSseTickets, SSE_TICKET_TTL_MS } from '../srv/sse-tickets.mjs';
+import { sourceLink } from '../srv/source-link.mjs';
 import { SSETransport } from '../src/net/transport-sse.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const temp = await mkdtemp(path.join(tmpdir(), 'aevum-server-test-'));
 const web = path.join(temp, 'web');
+const sourceRepo = 'https://github.com/kartalkral/aevum-rts';
+const deployedCommit = 'a'.repeat(40);
 const sentinel = 'CREDENTIAL-MUST-NOT-LEAK';
 let proc, fixtureServer;
 const http = (port, pathname, method = 'GET', headers = {}) => new Promise((resolve, reject) => {
@@ -48,7 +51,7 @@ try {
   const portPicker = createServer();
   const port = await listen(portPicker);
   await new Promise(r => portPicker.close(r));
-  proc = spawn(process.execPath, [path.join(web, 'server.js')], { env: { ...process.env, PORT: String(port), AEVUM_NO_AUTH: '', AEVUM_SA: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  proc = spawn(process.execPath, [path.join(web, 'server.js')], { env: { ...process.env, PORT: String(port), AEVUM_NO_AUTH: '', AEVUM_SA: '', RENDER_GIT_COMMIT: deployedCommit, KARTAL_SOURCE_COMMIT: 'b'.repeat(40) }, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   proc.stderr.on('data', c => { output += c; });
   await new Promise((resolve, reject) => {
@@ -71,6 +74,20 @@ try {
     assert.ok(r.headers['content-type'].startsWith(type), file);
     assert.equal(r.body.length, Number(r.headers['content-length']), file);
     assert.ok(r.body.length > 0, file);
+  }
+  assert.match((await http(port, '/')).body.toString(), /<title>Kartal RTS<\/title>/);
+  assert.equal((await http(port, '/src/ui/project-links.js')).status, 200);
+  const source = await http(port, '/source?next=https://example.org');
+  assert.equal(source.status, 302);
+  assert.equal(source.headers.location, `${sourceRepo}/tree/${deployedCommit}`);
+  assert.equal(source.headers['cache-control'], 'no-store');
+  assert.equal((await http(port, '/source', 'HEAD')).headers.location, source.headers.location);
+  assert.equal((await http(port, '/source', 'POST')).status, 405);
+  assert.deepEqual(sourceLink({ KARTAL_SOURCE_COMMIT: 'https://example.org' }), { url: sourceRepo, pinned: false });
+  assert.deepEqual(sourceLink({ KARTAL_SOURCE_COMMIT: deployedCommit.toUpperCase() }), { url: source.headers.location, pinned: true });
+  assert.equal((await http(port, '/assets/sfx/cannon_shot1.mp3')).status, 200);
+  for (const mix of ['cannon_shot2', 'cannon_shot3']) {
+    assert.equal((await http(port, `/assets/sfx/${mix}.mp3`)).status, 404, mix);
   }
   const head = await http(port, '/src/main.js', 'HEAD');
   assert.equal(head.status, 200);

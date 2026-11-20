@@ -21,7 +21,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0d13; col
 /* ---------- MENU ---------- */
 .menu { position: absolute; inset: 0; pointer-events: auto; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 30%, rgba(20,28,44,.55), rgba(5,7,12,.9)); animation: fadeIn .5s ease; }
 .menu-box { width: min(560px, 92vw); max-height: 92vh; overflow: auto; padding: 34px 38px; text-align: center; }
-.logo { font-size: 78px; letter-spacing: 18px; font-weight: 200; margin: 0 0 2px 18px; background: linear-gradient(180deg, #fff3cf, var(--gold) 45%, var(--gold2)); -webkit-background-clip: text; background-clip: text; color: transparent; text-shadow: 0 0 40px rgba(232,194,106,.25); }
+.wordmark { font-size: clamp(32px, 9vw, 58px); line-height: 1.1; font-weight: 750; letter-spacing: .03em; margin: 0 0 6px; color: var(--ink); }
+.project-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px; margin-top: 14px; font-size: 12px; }
+.project-links a { color: var(--ink); text-decoration: underline; }
 .tagline { color: var(--dim); letter-spacing: 4px; text-transform: uppercase; font-size: 12px; margin-bottom: 28px; }
 .menu h2 { font-weight: 400; letter-spacing: 3px; color: var(--gold); margin: 0 0 18px; text-transform: uppercase; font-size: 18px; }
 .mbtn { display: block; width: 100%; margin: 9px 0; padding: 13px 16px; font-size: 16px; letter-spacing: 1.5px; background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.02)); border: 1px solid var(--line); border-radius: 8px; transition: all .15s; }
@@ -407,7 +409,7 @@ table.st th { color: var(--gold); font-weight: 600; }
 /* ---------- PROFILE ---------- */
 .menu-box.profile { width: min(780px, 96vw); text-align: left; padding: 24px 26px; }
 .menu-box.profile > h2, .menu-box.prof-first h2 { text-align: center; }
-.menu-box.prof-first .logo { font-size: 54px; letter-spacing: 12px; }
+.menu-box.prof-first .wordmark { font-size: clamp(30px, 8vw, 46px); }
 .mperr.prof-ok { color: var(--green); }
 .mbtn.danger:hover:not(:disabled) { border-color: var(--red); background: rgba(255,93,93,.14); box-shadow: none; }
 .prof-meta { color: var(--dim); font-size: 12px; margin: -4px 0 10px; }
@@ -541,7 +543,6 @@ button.gbtn, button.gbtn .gbtn-t { color: #1f1f1f !important; text-shadow: none 
 .lb-tp { font-size: 12px; color: var(--gold); font-variant-numeric: tabular-nums; white-space: nowrap; }
 @media (max-width: 640px) {
   .menu-box { padding: 22px 16px; }
-  .logo { font-size: 52px; letter-spacing: 10px; margin-left: 10px; }
   .frow { flex-wrap: wrap; gap: 6px; }
   .frow > label { flex: 1 0 100%; }
   .frow > .mpinput { flex: 1 1 100%; }

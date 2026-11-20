@@ -149,7 +149,7 @@ export function menuProfile(ui, note, bad) {
       const a = document.createElement('a');
       const fname = (p.name.normalize('NFKD').replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'oyuncu');
       a.href = URL.createObjectURL(blob);
-      a.download = 'aevum-profil-' + fname + '-' + new Date().toISOString().slice(0, 10) + '.json';
+      a.download = 'kartal-rts-profil-' + fname + '-' + new Date().toISOString().slice(0, 10) + '.json';
       document.body.append(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 10000);
       say('Profil dosyası indirildi (' + history.length + ' maç).', true);

@@ -265,7 +265,7 @@ export function validateImport(obj, now) {
   const bad = (error) => ({ ok: false, error, profile: null, history: [] });
   if (typeof obj === 'string') { try { obj = JSON.parse(obj); } catch { return bad('Dosya geçerli bir JSON değil.'); } }
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return bad('Dosya biçimi tanınmadı.');
-  if (obj.format !== EXPORT_FORMAT || obj.v !== 1) return bad('Bu bir Aevum profil dosyası değil.');
+  if (obj.format !== EXPORT_FORMAT || obj.v !== 1) return bad('Bu geçerli bir profil dosyası değil.');
   const p = obj.profile;
   if (!validProfile(p)) return bad('Dosyadaki profil geçersiz.');
   if (!Array.isArray(obj.history)) return bad('Dosyadaki maç geçmişi geçersiz.');

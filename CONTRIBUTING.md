@@ -1,6 +1,6 @@
-# Contributing to Aevum
+# Contributing to Kartal RTS
 
-Aevum is a browser RTS (Three.js, plain ES modules, no build step) with a small Node server for multiplayer.
+Kartal RTS is a browser RTS (Three.js, plain ES modules, no build step) with a small Node server for multiplayer.
 Contributions are welcome: bug fixes, balance, AI, maps, performance, translations.
 
 ## Run it
@@ -23,6 +23,12 @@ Playing requires a Google sign-in through Firebase (Auth + Firestore, free Spark
   `AEVUM_FIREBASE_PROJECT=<your-project-id> node server.js`.
 - For offline tests the server accepts `AEVUM_NO_AUTH=1` (local only, never in production).
 - Never commit keys, service-account files (`*firebase-sa*.json`, `*-adminsdk-*.json`) or `.env` files.
+
+## Public deployments
+
+Use the Kartal RTS name rather than the upstream Aevum branding. The Render blueprint uses `kartal-rts`. Before migrating an existing deployment, check its service name, public URL, OAuth consent-screen branding and authorized domains. Browser storage does not move to a new origin. Keep existing `AEVUM_*` configuration names for compatibility and connect your own Firebase project.
+
+The public **Kaynak kodu** link goes to `/source`. On Render it uses `RENDER_GIT_COMMIT`; on other hosts set `KARTAL_SOURCE_COMMIT` to the full Git commit ID of the exact deployed revision. Without a valid ID the route links to the repository home page, which does not identify the deployed version. For public deployment, verify that `/source` leads to the correct revision and that the complete Corresponding Source is publicly accessible at no charge; configuration and a redirect alone are not verification. Keep the original asset notices and the credits inventory, and do not publish LIB/KIT files or mixes containing them.
 
 ## Server boundaries
 

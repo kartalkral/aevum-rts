@@ -32,3 +32,5 @@ assets/sfx/musket3.mp3
 assets/sfx/rifle1.mp3
 assets/sfx/rifle2.mp3
 assets/sfx/rifle3.mp3
+assets/sfx/cannon_shot2.mp3
+assets/sfx/cannon_shot3.mp3

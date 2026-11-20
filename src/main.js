@@ -42,7 +42,7 @@ function showError(err) {
       'font:14px/1.5 monospace;padding:12px 16px;white-space:pre-wrap;max-height:50vh;overflow:auto;pointer-events:auto';
     document.body.appendChild(el);
   }
-  el.textContent = 'Aevum bir hatayla karşılaştı:\n' + (err && (err.stack || err.message) || String(err));
+  el.textContent = 'Kartal RTS bir hatayla karşılaştı:\n' + (err && (err.stack || err.message) || String(err));
 }
 
 const app = {
@@ -618,7 +618,7 @@ function boot() {
     if (!on) { if (n) n.remove(); return; }
     if (n) return;
     n = document.createElement('div'); n.id = 'storage-blocked'; n.className = 'storage-blocked';
-    n.textContent = 'Aevum başka bir sekmede (eski sürüm) açık. Kayıtlar ve maç geçmişi için o sekmeyi kapat.';
+    n.textContent = 'Kartal RTS başka bir sekmede (eski sürüm) açık. Kayıtlar ve maç geçmişi için o sekmeyi kapat.';
     document.body.append(n);
   });
 

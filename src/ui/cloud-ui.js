@@ -1,4 +1,5 @@
 import { chatPrivacyNotice } from './chat-privacy-ui.js';
+import { projectLinks } from './project-links.js';
 // Aevum - account UI: the sign-in window (Google is the only way in, and signing in is required to play), the
 // account card of the main menu, avatars, the account part of the Profil screen, save badges and the delete-save
 // question. All user-controlled text (e-mail, names, server messages) goes in via textContent only; avatar markup
@@ -80,7 +81,7 @@ export async function resumeGoogleRedirect(ui) {
   if (!cloud) return;
   const box = ui._menuBox('');
   box.classList.add('acc-gate');
-  box.append(h('div', 'logo', 'AEVUM'), h('div', 'mpnote', 'Google ile giriş tamamlanıyor...'));
+  box.append(h('div', 'wordmark', 'Kartal RTS'), h('div', 'mpnote', 'Google ile giriş tamamlanıyor...'), projectLinks());
   const r = await cloud.finishGoogleRedirect({ askMerge: async (n) => confirm(mergeQuestion(n)) });
   if (!r) { ui._menuMain(); return; }
   if (!r.ok) { carriedError = r.silent ? '' : (r.error || ''); ui._menuMain(); return; }
@@ -124,7 +125,7 @@ export function googleBlock(ui, opts = {}) {
 export function loginScreen(ui) {
   const box = ui._menuBox('');
   box.classList.add('acc-gate');
-  box.append(h('div', 'logo', 'AEVUM'), h('div', 'tagline', 'Çağları aş · Uygarlığını kur'));
+  box.append(h('div', 'wordmark', 'Kartal RTS'), h('div', 'tagline', 'Çağları aş · Uygarlığını kur'));
   const card = h('div', 'gate-card');
   card.append(h('h2', '', 'Hoş Geldin, Komutan'),
     h('p', 'gate-text', 'Oynamak için Google hesabınla giriş yap. Her hesap tek bir oyuncudur: adın, avatarın, TP puanın, maç geçmişin ve kayıtların hesabına bağlı kalır ve her bilgisayarda seninle gelir.'));
@@ -138,7 +139,7 @@ export function loginScreen(ui) {
   how.type = 'button';
   how.onclick = () => { safe(() => ui._click()); ui._menuHowto(); };
   links.append(how);
-  box.append(links);
+  box.append(links, projectLinks());
 }
 
 // ---------- status ----------

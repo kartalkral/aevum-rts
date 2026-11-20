@@ -32,7 +32,7 @@ const SOUNDS = {
   crossbow:    { files: ['xbow_shot1'], vol: 0.45, minGap: 0.06, range: 40, pitch: 0.05, combat: 1 },
   musket:      { files: ['musket1', 'musket2', 'musket3'], vol: 0.5, minGap: 0.08, range: 58, pitch: 0.05, combat: 1 },
   rifle:       { files: ['rifle1', 'rifle2', 'rifle3'], vol: 0.45, minGap: 0.08, range: 58, pitch: 0.05, combat: 1 },
-  cannon:      { files: ['cannon_shot1', 'cannon_shot2', 'cannon_shot3'], vol: 0.75, minGap: 0.15, range: 75, pitch: 0.05, combat: 2 },
+  cannon:      { files: ['cannon_shot1'], vol: 0.75, minGap: 0.15, range: 75, pitch: 0.05, combat: 2 },
   catapult:    { files: ['catapult1', 'catapult2'], vol: 0.6, minGap: 0.15, range: 50, pitch: 0.05, combat: 1 },
   // projectile impacts
   arrowWood:   { files: ['arrow_wood1', 'arrow_wood2'], vol: 0.4, minGap: 0.06, range: 34, pitch: 0.05, combat: 1 },

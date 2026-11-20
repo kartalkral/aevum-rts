@@ -5,6 +5,7 @@ import { levelOf } from '../rank.js';
 import { avatarEl, confirmDeleteSave, loginScreen, menuHud, saveBadge, saveBadgeTitle, tpText } from './cloud-ui.js';
 import { firstLaunch } from './profile-ui.js';
 import { CLIMATE_OPTS, el, esc, hex, MAP_TYPE_TR, MAP_TYPES, safe } from './ui-shared.js';
+import { projectLinks } from './project-links.js';
 
 // developer mode (a sandbox game: no TP, no match history): offered on a local dev server, or with ?dev=1 in the URL
 function devModeOffered() {
@@ -42,7 +43,7 @@ export const menuMethods = {
   _menuMain(note) {
     // nothing is playable before signing in with Google (one account = one player)
     if (!this._signedIn()) { loginScreen(this); if (note) this._menuNote(note); return; }
-    const box = this._menuBox('<div class="logo">AEVUM</div><div class="tagline">Çağları aş · Uygarlığını kur</div>');
+    const box = this._menuBox('<div class="wordmark">Kartal RTS</div><div class="tagline">Çağları aş · Uygarlığını kur</div>');
     if (note) this._menuNote(note);
     this._mbtn(box, 'Yeni Oyun', () => this._menuSetup(), 'primary');
     this._mbtn(box, 'Çok Oyunculu', () => this._menuMulti());
@@ -62,6 +63,7 @@ export const menuMethods = {
       if (set) set.after(b);
     }).catch(() => {});
     if (this.game && !this.game.over && !this.app.demo && !this.app.net) this._mbtn(box, 'Oyuna Dön', () => { this.showHUD(); this.app.setPaused?.(false); });
+    box.append(projectLinks());
     safe(() => menuHud(this));   // the player plate (avatar, name, level, TP) and account chips around the menu
     void saves; void firstLaunch;
   },
@@ -69,7 +71,7 @@ export const menuMethods = {
   _menuNote(text) {
     const box = this.menuEl.querySelector('.menu-box'); if (!box || !text) return;
     const n = el('div', 'mperr prof-ok menu-note'); n.textContent = String(text); n.setAttribute('role', 'status');
-    const logo = box.querySelector('.tagline') || box.querySelector('.logo');
+    const logo = box.querySelector('.tagline') || box.querySelector('.wordmark');
     if (logo) logo.after(n); else box.prepend(n);
   },
   _seg(parent, label, key, opts, cls = '') {
@@ -221,6 +223,7 @@ export const menuMethods = {
     this._settingsBody(sbox); m.append(sbox);
     if (net) btn('Maçtan Ayrıl', () => { if (confirm('Maçtan ayrılmak istediğine emin misin? (Maç diğerleri için sürer.)')) { this.menuOpen = false; safe(() => this.app.leaveMultiplayer?.()); } });
     else btn('Ana Menü', () => { safe(() => this.app.toMenu?.()); this.showMenu(); });
+    m.append(projectLinks());
     this.pauseEl.append(m);
   },
   // is the in-game menu showing? (single player: paused; multiplayer: opened, or the match is paused)

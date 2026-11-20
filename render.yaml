@@ -1,7 +1,7 @@
 # Render blueprint: one free web service that serves the game and the multiplayer relay.
 services:
   - type: web
-    name: aevum
+    name: kartal-rts
     runtime: node
     plan: free
     buildCommand: "echo no build step"
